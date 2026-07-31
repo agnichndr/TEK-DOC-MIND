@@ -13,6 +13,7 @@ import {
   listRepositoryContentsAction,
 } from "@/actions/repositoryActions";
 import { AgentsPanel } from "@/components/forms/AgentsPanel";
+import { DeleteConfirmationDialog } from "@/components/ui/DeleteConfirmationDialog";
 import {
   emptyConnectorDrafts,
   LlmConnectorStep,
@@ -346,6 +347,8 @@ function RepositoryGroupsPanel({
   const [groups, setGroups] = useState(initialGroups);
   const [draft, setDraft] = useState<ProjectRepositoryGroupInput | null>(null);
   const [message, setMessage] = useState("");
+  const [removingGroup, setRemovingGroup] =
+    useState<ProjectRepositoryGroup | null>(null);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<ModuleListView>("cards");
@@ -417,11 +420,12 @@ function RepositoryGroupsPanel({
   const remove = async (id: string) => {
     const result = await deleteProjectRepositoryGroupAction(id);
     if (result.status === "error") {
-      setMessage(result.message);
-      return;
+      return result.message;
     }
     setGroups((current) => current.filter((group) => group.id !== id));
+    setMessage("");
     router.refresh();
+    return null;
   };
 
   if (draft) {
@@ -750,7 +754,7 @@ function RepositoryGroupsPanel({
               <button
                 aria-label={`Delete ${group.name}`}
                 className="danger-link"
-                onClick={() => void remove(group.id)}
+                onClick={() => setRemovingGroup(group)}
                 type="button"
               >
                 <TrashIcon width={13} height={13} />
@@ -771,7 +775,7 @@ function RepositoryGroupsPanel({
                   <td>{group.repositoryMode === "all" ? "All repositories" : "Selected repositories"}</td>
                   <td>{group.repositories.length}</td>
                   <td>{group.description || "No description."}</td>
-                  <td><div className="module-table-actions"><button onClick={() => setDraft(group)} type="button"><PencilIcon width={13} height={13} /> Edit</button><button className="danger-link" onClick={() => void remove(group.id)} type="button"><TrashIcon width={13} height={13} /> Delete</button></div></td>
+                  <td><div className="module-table-actions"><button onClick={() => setDraft(group)} type="button"><PencilIcon width={13} height={13} /> Edit</button><button aria-label={`Delete ${group.name}`} className="danger-link" onClick={() => setRemovingGroup(group)} type="button"><TrashIcon width={13} height={13} /> Delete</button></div></td>
                 </tr>
               ))}
             </tbody>
@@ -819,6 +823,16 @@ function RepositoryGroupsPanel({
         </div>
       ) : null}
       </div>
+      {removingGroup ? (
+        <DeleteConfirmationDialog
+          confirmLabel="Delete group"
+          description={`This permanently deletes the ${removingGroup.name} repository group and its saved source configuration.`}
+          onClose={() => setRemovingGroup(null)}
+          onConfirm={() => remove(removingGroup.id)}
+          pendingLabel="Deleting group…"
+          title="Delete repository group?"
+        />
+      ) : null}
     </section>
   );
 }
