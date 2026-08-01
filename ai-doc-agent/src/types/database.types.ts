@@ -9,6 +9,58 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      project_actions: {
+        Row: {
+          id: string;
+          project_id: string;
+          repository_group_id: string;
+          pipeline_id: string;
+          action_type: string;
+          state: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          repository_group_id: string;
+          pipeline_id: string;
+          action_type?: string;
+          state?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          repository_group_id?: string;
+          pipeline_id?: string;
+          action_type?: string;
+          state?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_actions_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_actions_repository_group_fkey";
+            columns: ["project_id", "repository_group_id"];
+            isOneToOne: false;
+            referencedRelation: "project_repository_groups";
+            referencedColumns: ["project_id", "id"];
+          },
+          {
+            foreignKeyName: "project_actions_pipeline_fkey";
+            columns: ["project_id", "pipeline_id"];
+            isOneToOne: false;
+            referencedRelation: "project_pipelines";
+            referencedColumns: ["project_id", "id"];
+          },
+        ];
+      };
       project_agents: {
         Row: {
           id: string;
@@ -60,6 +112,192 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: "project_llm_connectors";
             referencedColumns: ["project_id", "connector"];
+          },
+        ];
+      };
+      project_pipelines: {
+        Row: {
+          id: string;
+          project_id: string;
+          name: string;
+          description: string;
+          default_connector: string;
+          default_model: string;
+          yaml_definition: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          name: string;
+          description?: string;
+          default_connector: string;
+          default_model: string;
+          yaml_definition: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          name?: string;
+          description?: string;
+          default_connector?: string;
+          default_model?: string;
+          yaml_definition?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_pipelines_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_pipelines_default_connector_fkey";
+            columns: ["project_id", "default_connector"];
+            isOneToOne: false;
+            referencedRelation: "project_llm_connectors";
+            referencedColumns: ["project_id", "connector"];
+          },
+        ];
+      };
+      project_pipeline_nodes: {
+        Row: {
+          pipeline_id: string;
+          id: string;
+          node_kind: string;
+          agent_id: string | null;
+          position_x: number;
+          position_y: number;
+          output_config: Json | null;
+          input_media_urls: Json;
+        };
+        Insert: {
+          pipeline_id: string;
+          id: string;
+          node_kind: string;
+          agent_id?: string | null;
+          position_x: number;
+          position_y: number;
+          output_config?: Json | null;
+          input_media_urls?: Json;
+        };
+        Update: {
+          node_kind?: string;
+          agent_id?: string | null;
+          position_x?: number;
+          position_y?: number;
+          output_config?: Json | null;
+          input_media_urls?: Json;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_pipeline_nodes_pipeline_id_fkey";
+            columns: ["pipeline_id"];
+            isOneToOne: false;
+            referencedRelation: "project_pipelines";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_pipeline_nodes_agent_id_fkey";
+            columns: ["agent_id"];
+            isOneToOne: false;
+            referencedRelation: "project_agents";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      project_uploads: {
+        Row: {
+          id: string;
+          project_id: string;
+          source_pipeline_id: string | null;
+          original_file_name: string;
+          media_url: string;
+          blob_name: string;
+          content_type: string;
+          size_bytes: number;
+          created_at: string;
+        };
+        Insert: {
+          id: string;
+          project_id: string;
+          source_pipeline_id?: string | null;
+          original_file_name: string;
+          media_url: string;
+          blob_name: string;
+          content_type: string;
+          size_bytes: number;
+          created_at?: string;
+        };
+        Update: {
+          source_pipeline_id?: string | null;
+          original_file_name?: string;
+          media_url?: string;
+          blob_name?: string;
+          content_type?: string;
+          size_bytes?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_uploads_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_uploads_source_pipeline_id_fkey";
+            columns: ["source_pipeline_id"];
+            isOneToOne: false;
+            referencedRelation: "project_pipelines";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      project_pipeline_edges: {
+        Row: {
+          pipeline_id: string;
+          id: string;
+          from_node_id: string;
+          to_node_id: string;
+          source_anchor: string;
+        };
+        Insert: {
+          pipeline_id: string;
+          id: string;
+          from_node_id: string;
+          to_node_id: string;
+          source_anchor?: string;
+        };
+        Update: {
+          from_node_id?: string;
+          to_node_id?: string;
+          source_anchor?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_pipeline_edges_pipeline_id_fkey";
+            columns: ["pipeline_id"];
+            isOneToOne: false;
+            referencedRelation: "project_pipelines";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_pipeline_edges_from_fkey";
+            columns: ["pipeline_id", "from_node_id"];
+            isOneToOne: false;
+            referencedRelation: "project_pipeline_nodes";
+            referencedColumns: ["pipeline_id", "id"];
+          },
+          {
+            foreignKeyName: "project_pipeline_edges_to_fkey";
+            columns: ["pipeline_id", "to_node_id"];
+            isOneToOne: false;
+            referencedRelation: "project_pipeline_nodes";
+            referencedColumns: ["pipeline_id", "id"];
           },
         ];
       };
@@ -364,6 +602,7 @@ export type Database = {
           p_session_token_hash: string;
         };
         Returns: {
+          project_id: string;
           project_name: string;
           project_description: string;
           created_at: string;
@@ -436,6 +675,38 @@ export type Database = {
         Args: { p_session_token_hash: string; p_group_id: string };
         Returns: boolean;
       };
+      list_project_actions: {
+        Args: { p_session_token_hash: string };
+        Returns: {
+          id: string;
+          repository_group_id: string;
+          repository_group_name: string;
+          pipeline_id: string;
+          pipeline_name: string;
+          action_type: string;
+          state: string;
+          created_at: string;
+          updated_at: string;
+        }[];
+      };
+      create_project_document_action: {
+        Args: {
+          p_session_token_hash: string;
+          p_repository_group_id: string;
+          p_pipeline_id: string;
+        };
+        Returns: {
+          id: string;
+          repository_group_id: string;
+          repository_group_name: string;
+          pipeline_id: string;
+          pipeline_name: string;
+          action_type: string;
+          state: string;
+          created_at: string;
+          updated_at: string;
+        }[];
+      };
       list_project_llm_connectors: {
         Args: { p_session_token_hash: string };
         Returns: {
@@ -472,6 +743,93 @@ export type Database = {
       };
       delete_project_llm_connector: {
         Args: { p_session_token_hash: string; p_connector: string };
+        Returns: boolean;
+      };
+      list_project_pipelines: {
+        Args: { p_session_token_hash: string };
+        Returns: {
+          id: string;
+          name: string;
+          description: string;
+          default_connector: string;
+          default_model: string;
+          yaml_definition: string;
+          nodes: Json;
+          edges: Json;
+          created_at: string;
+          updated_at: string;
+        }[];
+      };
+      list_project_uploads: {
+        Args: { p_session_token_hash: string };
+        Returns: {
+          id: string;
+          source_pipeline_id: string | null;
+          original_file_name: string;
+          media_url: string;
+          content_type: string;
+          size_bytes: number;
+          created_at: string;
+        }[];
+      };
+      save_project_pipeline_with_uploads: {
+        Args: {
+          p_session_token_hash: string;
+          p_pipeline_id: string;
+          p_name: string;
+          p_description: string;
+          p_default_connector: string;
+          p_default_model: string;
+          p_yaml_definition: string;
+          p_nodes: Json;
+          p_edges: Json;
+          p_node_media: Json;
+          p_uploads: Json;
+        };
+        Returns: {
+          id: string;
+          name: string;
+          description: string;
+          default_connector: string;
+          default_model: string;
+          yaml_definition: string;
+          nodes: Json;
+          edges: Json;
+          created_at: string;
+          updated_at: string;
+        }[];
+      };
+      list_project_upload_blob_names: {
+        Args: { p_session_token_hash: string };
+        Returns: { blob_name: string }[];
+      };
+      save_project_pipeline: {
+        Args: {
+          p_session_token_hash: string;
+          p_pipeline_id: string;
+          p_name: string;
+          p_description: string;
+          p_default_connector: string;
+          p_default_model: string;
+          p_yaml_definition: string;
+          p_nodes: Json;
+          p_edges: Json;
+        };
+        Returns: {
+          id: string;
+          name: string;
+          description: string;
+          default_connector: string;
+          default_model: string;
+          yaml_definition: string;
+          nodes: Json;
+          edges: Json;
+          created_at: string;
+          updated_at: string;
+        }[];
+      };
+      delete_project_pipeline: {
+        Args: { p_session_token_hash: string; p_pipeline_id: string };
         Returns: boolean;
       };
       list_project_agents: {

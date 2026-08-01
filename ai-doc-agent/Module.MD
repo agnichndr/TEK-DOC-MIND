@@ -91,7 +91,29 @@
   project scope. Migration
   `202608010004_cascade_agents_on_connector_delete.sql` allows a saved LLM
   connector to be removed atomically by cascading deletion to project agents
-  that depend on that connector.
+  that depend on that connector. Migration
+  `202608010005_create_project_pipelines.sql` adds forced-RLS pipeline, node,
+  and edge tables with session-scoped CRUD RPCs, project-agent validation,
+  acyclic/reachability graph constraints, multi-input links, and unreachable
+  branch cleanup. Migration
+  `202608010006_add_pipeline_yaml_defaults_and_anchors.sql` adds the pipeline
+  default connector/model, canonical bounded YAML definition, persisted edge
+  source anchors, project-connector enforcement, and updated session-scoped
+  list/save RPCs. Pipeline node output configuration is stored as validated
+  JSONB in normalized node rows and included in the canonical YAML definition.
+  It can include a bounded, unique, ordered `sourceNodeIds` list for deterministic
+  multi-agent output-file assembly; every ID must belong to the submitted graph
+  and the output-owning node must remain in the list. Optional `sourceHeaders`
+  are keyed by mapped node ID and provide bounded per-contributor section labels.
+  Migration `202608010007_persist_pipeline_uploads_in_azure.sql` adds the
+  forced-RLS `project_uploads` metadata table, project-scoped upload listing,
+  node media URL arrays, and an atomic pipeline-plus-upload-metadata save RPC.
+  Azure stores the file bytes under
+  `projectname_project_id/pipelinename_pipeline_id/uploads`; the database stores
+  metadata and pipeline media URLs only.
+  Migration `202608020008_enforce_pipeline_output_assembly.sql` adds deferred
+  constraint triggers that require at least one agent and one output file in the
+  final saved graph and validate ordered output sources and optional headers.
   Repository-group upserts target the named primary-key constraint to avoid
   collisions between PL/pgSQL output variables and table column names.
 - **Backend Layer:**
@@ -106,7 +128,11 @@
     `src/app/api/agents/models/route.ts` resolves a selected saved connector,
     decrypts it server-side, and fetches its provider model catalog without
     exposing credentials. `src/actions/agentActions.ts` provides validated agent
-    create/update/delete.
+    create/update/delete. `src/actions/pipelineActions.ts` and
+    `src/services/pipelineService.ts` validate, map, and persist project-scoped
+    pipeline graphs and bounded multipart uploads. `src/services/azureBlobService.ts`
+    performs server-authenticated Azure Blob writes and compensating cleanup;
+    `src/lib/azureBlobPath.ts` builds deterministic project/pipeline prefixes.
 - **Frontend Layer:**
   - Pages: the protected project page.
   - Components: `ProjectResources.tsx` provides Repositories, Repository groups,
@@ -130,9 +156,30 @@
     provider-logo and connection-status connector menu, while
     `src/components/ui/UiDropdown.tsx` supplies the searchable non-native model
     dropdown and shared project-resource dropdown presentation.
+    `PipelinePanel.tsx` provides the Pipeline tab, project-agent
+    picker, draggable node canvas, dummy GitHub Repository Group source,
+    branching add controls, drag-to-connect existing-node links, searchable agents,
+    inline persisted agent creation, default connector/model selection,
+    project-bound versioned `.yml` import/download and pipeline
+    create/edit/delete flows. Its pipeline library provides top and bottom
+    create actions, full-card editing, explicit edit/delete actions, searchable
+    card and table views, a no-results state, and a connector-aware first-item
+    empty state. Automatic `+` edges persist a right-side anchor;
+    manually drawn edges retain their selected top, bottom, or left anchor.
+    Each node's `+` menu exposes Agent and Output actions; Output records a safe
+    parent path, file name, and supported file type, marks the node visually,
+    and creates a linked output-file target below the graph. The target can map
+    additional agent outputs through its picker or by receiving a drawn link from
+    an agent port, displays a link from every contributor, and offers explicit
+    up/down controls plus an optional header for every file assembly input.
+    Its node Inputs dialog combines upstream node links, reusable Azure-backed
+    project uploads, and pending device files. Pending files remain in browser
+    memory until Save Pipeline; selected files then upload once and their media
+    URLs persist on every assigned node.
 - **Cross-Module Dependencies:** Project Vault, Repository Sources, provider
   verification services, a server-only versioned encryption key, Supabase RPC
-  transport, Node cryptography, and Zod.
+  transport, Azure Blob Storage with environment-specific account/container/key,
+  Node cryptography, Zod, and `js-yaml`.
 
 ### Product Tour Onboarding
 

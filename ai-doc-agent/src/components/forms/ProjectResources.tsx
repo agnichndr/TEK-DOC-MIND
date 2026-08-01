@@ -8,11 +8,14 @@ import {
   deleteProjectRepositoryGroupAction,
   saveProjectRepositoryGroupAction,
 } from "@/actions/projectResourceActions";
+import { createProjectDocumentActionAction } from "@/actions/projectActionActions";
 import {
   listRepositoryBranchesAction,
   listRepositoryContentsAction,
 } from "@/actions/repositoryActions";
 import { AgentsPanel } from "@/components/forms/AgentsPanel";
+import { ActionsPanel } from "@/components/forms/ActionsPanel";
+import { PipelinePanel } from "@/components/forms/PipelinePanel";
 import { DeleteConfirmationDialog } from "@/components/ui/DeleteConfirmationDialog";
 import {
   emptyConnectorDrafts,
@@ -38,17 +41,25 @@ import {
 import { UiDropdown } from "@/components/ui/UiDropdown";
 import type { LlmConnectorSummary, LlmConnectorType } from "@/types/llmConnector";
 import type { ProjectAgent } from "@/types/agent";
+import type { ProjectDocumentAction } from "@/types/projectAction";
 import type {
   ProjectLlmConnector,
   ProjectRepositoryGroup,
   ProjectRepositoryGroupInput,
 } from "@/types/projectResource";
+import type { ProjectPipeline, ProjectUpload } from "@/types/pipeline";
 import type {
   ProjectRepository,
   RepositoryContentEntry,
 } from "@/types/repository";
 
-type ProjectTab = "repositories" | "groups" | "connectors" | "agents";
+type ProjectTab =
+  | "repositories"
+  | "groups"
+  | "connectors"
+  | "agents"
+  | "pipelines"
+  | "actions";
 
 function BranchSelect({
   repository,
@@ -334,13 +345,157 @@ function allRepositoryEntries(
   }));
 }
 
+function CreateDocumentActionDialog({
+  group,
+  onCancel,
+  onCreated,
+  onNavigatePipelines,
+  pipelines,
+}: {
+  group: ProjectRepositoryGroup;
+  onCancel: () => void;
+  onCreated: (action: ProjectDocumentAction) => void;
+  onNavigatePipelines: () => void;
+  pipelines: ProjectPipeline[];
+}) {
+  const router = useRouter();
+  const [pipelineId, setPipelineId] = useState(pipelines[0]?.id ?? "");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const createAction = async () => {
+    if (!pipelineId || saving) return;
+    setSaving(true);
+    setMessage("");
+    const result = await createProjectDocumentActionAction({
+      repositoryGroupId: group.id,
+      pipelineId,
+    });
+    setSaving(false);
+    if (result.status === "error") {
+      setMessage(result.message);
+      return;
+    }
+    router.refresh();
+    onCreated(result.resource);
+  };
+
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <section
+        aria-labelledby="create-document-action-title"
+        aria-modal="true"
+        className="confirmation-dialog document-action-dialog"
+        role="dialog"
+      >
+        <button
+          aria-label="Close create document dialog"
+          className="dialog-close"
+          disabled={saving}
+          onClick={onCancel}
+          type="button"
+        >
+          <XIcon />
+        </button>
+        <span className="form-icon document-action-icon">
+          <DocumentIcon height={20} width={20} />
+        </span>
+        <p className="eyebrow">New document action</p>
+        <h2 id="create-document-action-title">Choose a pipeline</h2>
+        <p>
+          Map <strong>{group.name}</strong> to the pipeline that should create
+          the document.
+        </p>
+
+        <div className="document-action-mapping" aria-label="Action mapping">
+          <div>
+            <small>Repository group</small>
+            <strong>{group.name}</strong>
+          </div>
+          <ArrowIcon height={16} width={16} />
+          <div>
+            <small>Action</small>
+            <strong>CREATE · NEW</strong>
+          </div>
+        </div>
+
+        <div className="field-group">
+          <span className="field-label">Available pipeline</span>
+          <UiDropdown
+            ariaLabel="Pipeline for document creation"
+            disabled={!pipelines.length || saving}
+            emptyText="No pipelines are available."
+            onChange={(value) => {
+              setPipelineId(value);
+              setMessage("");
+            }}
+            options={pipelines.map((pipeline) => ({
+              value: pipeline.id,
+              label: pipeline.name,
+              meta: pipeline.description || `${pipeline.nodes.length} pipeline nodes`,
+            }))}
+            placeholder="Select a pipeline"
+            value={pipelineId}
+          />
+        </div>
+
+        {!pipelines.length ? (
+          <p className="document-action-empty-note">
+            Create a pipeline before starting a document action.
+          </p>
+        ) : null}
+        {message ? (
+          <p className="form-message" role="alert">
+            {message}
+          </p>
+        ) : null}
+
+        <div className="dialog-actions">
+          <button
+            className="button-secondary"
+            disabled={saving}
+            onClick={onCancel}
+            type="button"
+          >
+            Cancel
+          </button>
+          {pipelines.length ? (
+            <button
+              className="button-primary"
+              disabled={saving || !pipelineId}
+              onClick={() => void createAction()}
+              type="button"
+            >
+              {saving ? "Creating action…" : "Create document"}
+            </button>
+          ) : (
+            <button
+              className="button-primary"
+              onClick={onNavigatePipelines}
+              type="button"
+            >
+              Open pipelines
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function RepositoryGroupsPanel({
   initialGroups,
+  onActionCreated,
+  onNavigatePipelines,
   onNavigateRepositories,
+  pipelines,
   repositories,
 }: {
   initialGroups: ProjectRepositoryGroup[];
+  onActionCreated: (action: ProjectDocumentAction) => void;
+  onNavigatePipelines: () => void;
   onNavigateRepositories: () => void;
+  pipelines: ProjectPipeline[];
   repositories: ProjectRepository[];
 }) {
   const router = useRouter();
@@ -348,6 +503,8 @@ function RepositoryGroupsPanel({
   const [draft, setDraft] = useState<ProjectRepositoryGroupInput | null>(null);
   const [message, setMessage] = useState("");
   const [removingGroup, setRemovingGroup] =
+    useState<ProjectRepositoryGroup | null>(null);
+  const [creatingActionFor, setCreatingActionFor] =
     useState<ProjectRepositoryGroup | null>(null);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
@@ -748,18 +905,27 @@ function RepositoryGroupsPanel({
               </div>
             </button>
             <footer>
-              <button onClick={() => setDraft(group)} type="button">
-                <PencilIcon width={12} height={12} /> Edit group
-              </button>
               <button
-                aria-label={`Delete ${group.name}`}
-                className="danger-link"
-                onClick={() => setRemovingGroup(group)}
+                className="repository-group-create-action"
+                onClick={() => setCreatingActionFor(group)}
                 type="button"
               >
-                <TrashIcon width={13} height={13} />
-                Delete
+                <DocumentIcon height={13} width={13} /> Create document
               </button>
+              <div className="repository-group-secondary-actions">
+                <button onClick={() => setDraft(group)} type="button">
+                  <PencilIcon width={12} height={12} /> Edit
+                </button>
+                <button
+                  aria-label={`Delete ${group.name}`}
+                  className="danger-link"
+                  onClick={() => setRemovingGroup(group)}
+                  type="button"
+                >
+                  <TrashIcon width={13} height={13} />
+                  Delete
+                </button>
+              </div>
             </footer>
           </article>
         ))}
@@ -775,7 +941,7 @@ function RepositoryGroupsPanel({
                   <td>{group.repositoryMode === "all" ? "All repositories" : "Selected repositories"}</td>
                   <td>{group.repositories.length}</td>
                   <td>{group.description || "No description."}</td>
-                  <td><div className="module-table-actions"><button onClick={() => setDraft(group)} type="button"><PencilIcon width={13} height={13} /> Edit</button><button aria-label={`Delete ${group.name}`} className="danger-link" onClick={() => setRemovingGroup(group)} type="button"><TrashIcon width={13} height={13} /> Delete</button></div></td>
+                  <td><div className="module-table-actions"><button className="module-create-document-action" onClick={() => setCreatingActionFor(group)} type="button"><DocumentIcon height={13} width={13} /> Create document</button><button onClick={() => setDraft(group)} type="button"><PencilIcon width={13} height={13} /> Edit</button><button aria-label={`Delete ${group.name}`} className="danger-link" onClick={() => setRemovingGroup(group)} type="button"><TrashIcon width={13} height={13} /> Delete</button></div></td>
                 </tr>
               ))}
             </tbody>
@@ -831,6 +997,21 @@ function RepositoryGroupsPanel({
           onConfirm={() => remove(removingGroup.id)}
           pendingLabel="Deleting group…"
           title="Delete repository group?"
+        />
+      ) : null}
+      {creatingActionFor ? (
+        <CreateDocumentActionDialog
+          group={creatingActionFor}
+          onCancel={() => setCreatingActionFor(null)}
+          onCreated={(action) => {
+            setCreatingActionFor(null);
+            onActionCreated(action);
+          }}
+          onNavigatePipelines={() => {
+            setCreatingActionFor(null);
+            onNavigatePipelines();
+          }}
+          pipelines={pipelines}
         />
       ) : null}
     </section>
@@ -907,19 +1088,35 @@ function ConnectorsPanel({
 }
 
 export function ProjectResources({
+  actions,
   agents,
   connectors,
   groups,
+  pipelines,
+  uploads,
+  projectId,
   projectName,
   repositories,
 }: {
+  actions: ProjectDocumentAction[];
   agents: ProjectAgent[];
   connectors: ProjectLlmConnector[];
   groups: ProjectRepositoryGroup[];
+  pipelines: ProjectPipeline[];
+  uploads: ProjectUpload[];
+  projectId: string;
   projectName: string;
   repositories: ProjectRepository[];
 }) {
   const [tab, setTab] = useState<ProjectTab>("repositories");
+  const [projectActions, setProjectActions] = useState(actions);
+  const connectorSummaries = connectors.map((connector) => {
+    const { createdAt, updatedAt, credentialStored, ...summary } = connector;
+    void createdAt;
+    void updatedAt;
+    void credentialStored;
+    return summary;
+  });
 
   return (
     <div className="project-resources">
@@ -936,6 +1133,12 @@ export function ProjectResources({
         <button className={tab === "agents" ? "active" : ""} onClick={() => setTab("agents")} role="tab" type="button">
           Agents <span>{agents.length}</span>
         </button>
+        <button className={tab === "pipelines" ? "active" : ""} onClick={() => setTab("pipelines")} role="tab" type="button">
+          Pipelines <span>{pipelines.length}</span>
+        </button>
+        <button className={tab === "actions" ? "active" : ""} onClick={() => setTab("actions")} role="tab" type="button">
+          Actions <span>{projectActions.length}</span>
+        </button>
       </div>
       {tab === "repositories" ? (
         <RepositoryManager initialRepositories={repositories} projectName={projectName} />
@@ -943,7 +1146,16 @@ export function ProjectResources({
       {tab === "groups" ? (
         <RepositoryGroupsPanel
           initialGroups={groups}
+          onActionCreated={(action) => {
+            setProjectActions((current) => [
+              action,
+              ...current.filter((item) => item.id !== action.id),
+            ]);
+            setTab("actions");
+          }}
+          onNavigatePipelines={() => setTab("pipelines")}
           onNavigateRepositories={() => setTab("repositories")}
+          pipelines={pipelines}
           repositories={repositories}
         />
       ) : null}
@@ -952,15 +1164,26 @@ export function ProjectResources({
       ) : null}
       {tab === "agents" ? (
         <AgentsPanel
-          connectors={connectors.map((connector) => {
-            const { createdAt, updatedAt, credentialStored, ...summary } = connector;
-            void createdAt;
-            void updatedAt;
-            void credentialStored;
-            return summary;
-          })}
+          connectors={connectorSummaries}
           initialAgents={agents}
           onNavigateConnectors={() => setTab("connectors")}
+        />
+      ) : null}
+      {tab === "pipelines" ? (
+        <PipelinePanel
+          connectors={connectorSummaries}
+          initialAgents={agents}
+          initialPipelines={pipelines}
+          initialUploads={uploads}
+          onNavigateConnectors={() => setTab("connectors")}
+          projectId={projectId}
+          projectName={projectName}
+        />
+      ) : null}
+      {tab === "actions" ? (
+        <ActionsPanel
+          actions={projectActions}
+          onNavigateGroups={() => setTab("groups")}
         />
       ) : null}
     </div>

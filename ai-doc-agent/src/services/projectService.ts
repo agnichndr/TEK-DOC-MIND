@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 
 import { callSupabaseRpc } from "@/lib/supabase/server";
+import { deletePipelineBlob } from "@/services/azureBlobService";
 import type {
   CreateProjectResult,
   ProjectSession,
@@ -15,6 +16,7 @@ type CreateProjectRow = {
 };
 
 type AccessProjectRow = CreateProjectRow & {
+  project_id?: string;
   project_name: string;
   project_description: string;
   expires_at: string;
@@ -87,7 +89,7 @@ export async function accessProject(input: {
 
 export async function getProjectWorkspace(
   sessionToken: string,
-): Promise<ProjectSummary | null> {
+): Promise<(ProjectSummary & { id: string }) | null> {
   const rows = await callSupabaseRpc<AccessProjectRow[]>(
     "get_project_workspace",
     {
@@ -98,6 +100,7 @@ export async function getProjectWorkspace(
 
   return project
     ? {
+        id: project.project_id!,
         name: project.project_name,
         description: project.project_description,
         createdAt: project.created_at,
@@ -116,8 +119,22 @@ export async function deleteProject(input: {
   sessionToken: string;
   projectName: string;
 }): Promise<boolean> {
-  return callSupabaseRpc<boolean>("delete_project", {
+  const blobs = await callSupabaseRpc<Array<{ blob_name: string }>>(
+    "list_project_upload_blob_names",
+    { p_session_token_hash: hashOpaqueToken(input.sessionToken) },
+  );
+  const deleted = await callSupabaseRpc<boolean>("delete_project", {
     p_session_token_hash: hashOpaqueToken(input.sessionToken),
     p_project_name: input.projectName,
   });
+  if (deleted) {
+    const cleanup = await Promise.allSettled(
+      blobs.map((blob) => deletePipelineBlob(blob.blob_name)),
+    );
+    const failed = cleanup.filter((result) => result.status === "rejected").length;
+    if (failed) {
+      console.error("Azure project upload cleanup was incomplete", { failed });
+    }
+  }
+  return deleted;
 }

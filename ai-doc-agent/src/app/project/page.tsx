@@ -6,6 +6,11 @@ import { ProjectResources } from "@/components/forms/ProjectResources";
 import { LockIcon } from "@/components/ui/Icons";
 import { PROJECT_SESSION_COOKIE } from "@/lib/projectSession";
 import { listProjectAgents } from "@/services/agentService";
+import { listProjectDocumentActions } from "@/services/projectActionService";
+import {
+  listProjectPipelines,
+  listProjectUploads,
+} from "@/services/pipelineService";
 import { getProjectWorkspace } from "@/services/projectService";
 import { listProjectRepositories } from "@/services/repositoryService";
 import {
@@ -27,12 +32,23 @@ export default async function ProjectPage() {
     redirect("/");
   }
 
-  const [repositories, repositoryGroups, llmConnectors, agents] = await Promise.all([
-    listProjectRepositories(sessionToken),
-    listProjectRepositoryGroups(sessionToken),
-    listProjectLlmConnectors(sessionToken),
-    listProjectAgents(sessionToken),
-  ]);
+  const [
+    repositories,
+    repositoryGroups,
+    llmConnectors,
+    agents,
+    pipelines,
+    uploads,
+    actions,
+  ] = await Promise.all([
+      listProjectRepositories(sessionToken),
+      listProjectRepositoryGroups(sessionToken),
+      listProjectLlmConnectors(sessionToken),
+      listProjectAgents(sessionToken),
+      listProjectPipelines(sessionToken),
+      listProjectUploads(sessionToken),
+      listProjectDocumentActions(sessionToken),
+    ]);
 
   return (
     <main className="project-shell">
@@ -71,11 +87,15 @@ export default async function ProjectPage() {
       </section>
 
       <ProjectResources
+        actions={actions}
         agents={agents}
         connectors={llmConnectors}
         groups={repositoryGroups}
+        pipelines={pipelines}
+        projectId={project.id}
         projectName={project.name}
         repositories={repositories}
+        uploads={uploads}
       />
 
       <footer className="project-footer">

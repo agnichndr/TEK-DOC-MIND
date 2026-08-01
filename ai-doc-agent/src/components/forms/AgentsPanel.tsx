@@ -686,7 +686,7 @@ export function AgentsPanel({
         <DeleteConfirmationDialog
           confirmLabel="Delete agent"
           confirmationText={deletingAgent.name}
-          description="This permanently removes the agent and its stored skills configuration from this project."
+          description="This permanently removes the agent, its stored skills configuration, and any downstream pipeline branch that starts from this agent."
           onClose={() => setDeletingAgent(null)}
           onConfirm={() => remove(deletingAgent)}
           pendingLabel="Deleting agent…"

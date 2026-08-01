@@ -71,3 +71,38 @@ export function getLlmConnectorEncryptionKey() {
 
   return result.data;
 }
+
+const azureBlobEnvSchema = z.object({
+  AZURE_STORAGE_ACCOUNT_NAME: z
+    .string()
+    .regex(/^[a-z0-9]{3,24}$/, "Invalid Azure Storage account name."),
+  AZURE_STORAGE_ACCESS_KEY: z
+    .string()
+    .min(1)
+    .refine((value) => {
+      const decoded = Buffer.from(value, "base64");
+      return decoded.length > 0 && decoded.toString("base64") === value;
+    }, "Invalid Azure Storage access key."),
+  AZURE_STORAGE_CONTAINER_NAME: z
+    .string()
+    .regex(
+      /^(?!.*--)[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/,
+      "Invalid Azure Blob container name.",
+    ),
+});
+
+export function getAzureBlobEnv() {
+  const result = azureBlobEnvSchema.safeParse({
+    AZURE_STORAGE_ACCOUNT_NAME: process.env.AZURE_STORAGE_ACCOUNT_NAME,
+    AZURE_STORAGE_ACCESS_KEY: process.env.AZURE_STORAGE_ACCESS_KEY,
+    AZURE_STORAGE_CONTAINER_NAME: process.env.AZURE_STORAGE_CONTAINER_NAME,
+  });
+
+  if (!result.success) {
+    throw new Error(
+      "Azure Blob Storage environment variables are missing or invalid. See .env.example.",
+    );
+  }
+
+  return result.data;
+}

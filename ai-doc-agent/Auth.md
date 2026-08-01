@@ -136,6 +136,7 @@ interface to list or revoke all other sessions without deleting the project.
 | Delete LLM connector | Live project session and validated connector type | The RPC derives the project from the session and deletes only that project's matching connector; dependent project agents are deleted atomically by the composite foreign-key cascade |
 | Discover models for an agent | Live project session and a validated connector identifier | The same-origin route resolves the connector inside the session-derived project, decrypts its credential only on the server, and returns only sanitized provider model metadata |
 | List/save/delete project agents | Live project session and validated agent input | Agent rows are joined or mutated only through the session-derived project; connector/model references must use a connector saved in that project, and output behavior/type must match database-enforced values |
+| List/save/delete project pipelines and list/save project uploads | Live project session plus validated versioned YAML/graph and bounded multipart upload input | Pipeline, default connector/model, node, edge, anchor, agent, and media references are resolved inside the session-derived project; PostgreSQL enforces one source, full reachability, an acyclic graph, and project ownership of every media URL |
 | Logout | Current session token, when present | Deletes only the matching session |
 
 Exact-name confirmation reduces accidental destructive actions; it is not an
@@ -147,7 +148,8 @@ The database is the final project-isolation boundary:
 
 - Row Level Security is enabled and forced on `projects`, `project_sessions`,
   `repositories`, `project_repository_groups`, `project_llm_connectors`, and
-  `project_agents`.
+  `project_agents`, plus `project_pipelines`, `project_pipeline_nodes`,
+  `project_pipeline_edges`, and `project_uploads`.
 - Direct table privileges are revoked from `anon` and `authenticated`.
 - No permissive client table policies provide an alternate data path.
 - Narrow `SECURITY DEFINER` functions are the intended public database
@@ -248,6 +250,8 @@ inference quota or future availability.
   connector to belong to the same project. Deleting a connector cascades only
   to agents with the same project/connector pair, so the credential row and its
   now-invalid dependent agents are removed in one database transaction.
+  Pipeline node triggers prune downstream branches for agents removed directly
+  or through that connector cascade.
 - Skills Markdown is application content, not an authentication secret. It is
   stored as bounded PostgreSQL `text` so agent metadata and instructions commit
   atomically and inherit the same project authorization boundary.
@@ -261,6 +265,63 @@ inference quota or future availability.
 - If skills later become multi-file packages, large reference collections, or
   binary assets, private object storage should hold those objects while the
   database retains project-scoped metadata, hashes, ordering, and ownership.
+
+## Project Pipeline Authorization and Graph Integrity
+
+- Pipeline Server Actions validate names, descriptions, node positions, and
+  graph structure, default connector/model, and edge anchors before invoking
+  server-only services. Imported YAML is bounded, parsed, required to contain
+  the current server-provided project ID, and validated against the same schema.
+  These paths accept no project or tenant authority from the imported document.
+- The list, save, and delete RPCs derive `project_id` only from an unexpired
+  project session. A pipeline ID belonging to another project cannot be updated
+  or deleted through the active session.
+- `project_pipelines`, `project_pipeline_nodes`, and
+  `project_pipeline_edges` have forced RLS and no direct client table grants.
+  Narrow security-definer RPCs are their only public database surface.
+- Every graph contains exactly one source node. Agent nodes must reference
+  agents in the session project, edges must be unique and acyclic, and every
+  node must be reachable from the source. Multiple upstream nodes may feed one
+  agent node. A final saved graph must also contain at least one agent node and
+  one output file; deferred database triggers enforce these invariants after the
+  normalized graph replacement completes.
+- Optional node output configuration is schema-validated and database-checked
+  for a bounded absolute parent path without traversal segments, a bounded file
+  name without separators, and an allow-listed file type. Its optional ordered
+  source-node list is unique and bounded, may reference only nodes in the same
+  validated graph, may add only agent nodes beyond the owner, and must include
+  the node that owns the output file. Each mapped source may have one optional
+  bounded header. These mappings express deterministic assembly order and grant
+  no project authority; Zod and a deferred database trigger both validate them.
+- Optional node media inputs contain only unique HTTPS URLs. A save can add at
+  most 20 files, each between 1 byte and 10 MB, with at most 50 MB total; each
+  node can reference at most 20 project uploads. The action validates file
+  names, MIME types, sizes, and assignments before the service reads bytes.
+- New files stay in browser memory until Save Pipeline. The server derives the
+  project from the HTTP-only session, generates upload UUIDs, and uploads to the
+  environment-specific Azure container path
+  `projectname_project_id/pipelinename_pipeline_id/uploads`. The Azure account
+  name, container, and access key are server-only validated environment values.
+- `project_uploads` stores only ownership and media metadata: original name,
+  canonical URL, blob name, MIME type, size, and origin pipeline. It has forced
+  RLS and no direct client grants. Pipeline nodes and YAML persist media URLs,
+  while PostgreSQL never stores file bytes. The save RPC rejects any node URL
+  not registered to the session-derived project.
+- The default connector must exist in the session-derived project. The complete
+  canonical YAML definition is stored alongside normalized graph rows for
+  portability; it contains no connector credential. Removing that connector
+  cascades to dependent pipelines just as it cascades to dependent agents.
+- The GitHub Repository Group source is intentionally a placeholder. It stores
+  no repository-group identifier or repository credential and therefore adds
+  no new secret boundary.
+- Removing an agent deletes its pipeline node and downstream branch through a
+  database trigger; nodes that remain reachable through another input link are
+  preserved. Removing a pipeline deletes only its nodes and edges; the reusable
+  project agents remain intact.
+- Project uploads remain reusable when their origin pipeline is deleted; the
+  origin foreign key becomes null. Deleting the project removes all upload
+  metadata and triggers best-effort deletion of its Azure blobs. Failed external
+  cleanup is logged server-side without exposing the storage credential.
 
 ## Mandatory Rules for Future Changes
 

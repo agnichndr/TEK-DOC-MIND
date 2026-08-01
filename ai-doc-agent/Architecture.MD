@@ -14,8 +14,9 @@ client components, while validation, project ID generation, credential hashing,
 GitHub access verification, token encryption, and persistence remain server-side
 concerns.
 
-The project workspace owns four resource collections: repositories, reusable
-repository groups, verified LLM connectors, and project agents. A repository group can contain
+The project workspace owns six resource collections: repositories, reusable
+repository groups, verified LLM connectors, project agents, visual pipelines,
+and reusable project uploads. A repository group can contain
 any combination of repository entries. Each entry chooses a branch, then uses
 custom GitHub-populated branch dropdown and an on-demand browser to select the
 whole repository, a folder, one file, or multiple files. Groups can alternatively
@@ -32,6 +33,21 @@ image output type, and a bounded Markdown skills document. Output configuration
 and skills remain relational data because they are edited and versioned with the
 agent as one transactional unit; object storage is reserved for future
 multi-file or binary agent assets.
+Pipelines store a normalized directed acyclic graph. Each graph has one dummy
+GitHub Repository Group source node and project-agent nodes connected by edges;
+the source is an editor placeholder and deliberately does not select a concrete
+repository group. A node marked as output creates a linked output-file target;
+its output configuration stores an ordered list of contributing pipeline node
+IDs so multiple agent outputs can be assembled in a deterministic order, plus
+an optional bounded header for each contributor. Agent link ports can target
+either another workflow node or an existing output file. Every saved pipeline
+must contain at least one agent node and one output file. Files
+selected in the Pipeline Builder remain in browser
+memory until Save Pipeline. The server then writes them to an environment-specific
+Azure Blob container under
+`projectname_project_id/pipelinename_pipeline_id/uploads`, stores project-scoped
+file metadata in PostgreSQL, and persists only HTTPS media URLs in pipeline nodes
+and canonical YAML. File bytes never enter PostgreSQL.
 
 ## Security & Trust Boundaries
 
@@ -56,13 +72,20 @@ section summarizes those boundaries at the system level.
   12-hour, HTTP-only, SameSite cookie.
 - Row Level Security is enabled and forced on `projects`, `project_sessions`,
   `repositories`, `project_repository_groups`, `project_llm_connectors`, and
-  `project_agents`.
+  `project_agents`, plus `project_pipelines`, `project_pipeline_nodes`,
+  `project_pipeline_edges`, and `project_uploads`.
   The `anon` and `authenticated` roles have no direct table privileges or
   policies.
 - Narrow `SECURITY DEFINER` RPC functions are the only public database surface.
   They use an empty `search_path`, validate inputs, and return only non-sensitive
   fields. Protected RPCs derive `project_id` from an unexpired project session;
   they never trust a caller-provided tenant identifier.
+- Pipeline definitions are validated as versioned YAML-compatible graph
+  documents containing the owning internal project ID, then stored with their
+  normalized node/edge rows. Imports must match the server-provided current
+  project ID. The save RPC revalidates the live project session, default
+  connector, graph references, reachability, and acyclicity before atomically
+  replacing both representations.
 - Repository and project deletion RPCs require an unexpired project session and
   an exact server-checked resource-name confirmation. Project deletion relies on
   foreign-key cascades to remove its repositories, encrypted credentials,
@@ -106,6 +129,22 @@ section summarizes those boundaries at the system level.
   references from blocking credential deletion or surviving it. Agent Markdown
   is bounded to 200,000 characters, and output behavior/type are constrained
   to explicit enums, in both Zod and PostgreSQL.
+- Pipeline writes use validated Server Actions and session-scoped RPCs. The
+  database requires one source, project-owned agent references, unique edges,
+  an acyclic graph, and reachability from the source. Agent nodes can accept
+  links from multiple upstream nodes. Removing an agent prunes nodes that are no
+  longer reachable so a saved graph cannot retain broken branches. Ordered
+  output-file mappings are schema-validated against nodes in the same submitted
+  graph and must retain the node that owns the output configuration. A deferred
+  PostgreSQL constraint trigger rechecks the final normalized graph after each
+  transaction, including the minimum-agent and minimum-output invariants, so
+  direct RPC callers cannot bypass them.
+- Pipeline file submissions use bounded multipart `FormData` only at save time.
+  Server-side validation limits file count, individual and aggregate size,
+  names, MIME types, and node assignments. Azure account name, container, and
+  shared access key come only from validated environment configuration. The
+  session-scoped upload RPC accepts metadata only, verifies every node URL
+  belongs to the active project, and stores no binary column.
 
 The project-password and short-lived project-session flow is the domain
 authentication mechanism for this accountless module, so it does not rely on a
@@ -244,6 +283,10 @@ validated again, and passed through the same provider check.
   checks using submitted API keys or short-lived tokens.
 - **Azure OpenAI:** Model-list access against a validated Azure resource
   hostname using an API key or Entra access token.
+- **Azure Blob Storage:** Pipeline input files are uploaded with server-side
+  Shared Key authentication to the environment-configured storage account and
+  container. PostgreSQL retains project ownership, original name, MIME type,
+  size, blob name, and canonical media URL, never the file payload.
 - **Amazon Bedrock:** Signed `ListFoundationModels` through the AWS SDK using a
   validated region and encrypted project-scoped AWS credentials.
 - **Google Vertex AI:** Project/location model listing against a fixed,
