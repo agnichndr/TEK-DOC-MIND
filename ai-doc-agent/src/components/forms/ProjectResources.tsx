@@ -906,7 +906,7 @@ function RepositoryGroupsPanel({
             </button>
             <footer>
               <button
-                className="repository-group-create-action"
+                className="button-primary repository-group-create-action"
                 onClick={() => setCreatingActionFor(group)}
                 type="button"
               >
@@ -992,7 +992,7 @@ function RepositoryGroupsPanel({
       {removingGroup ? (
         <DeleteConfirmationDialog
           confirmLabel="Delete group"
-          description={`This permanently deletes the ${removingGroup.name} repository group and its saved source configuration.`}
+          description={`This permanently deletes the ${removingGroup.name} repository group, its saved source configuration, and any document actions mapped to it.`}
           onClose={() => setRemovingGroup(null)}
           onConfirm={() => remove(removingGroup.id)}
           pendingLabel="Deleting group…"

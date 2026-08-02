@@ -103,8 +103,9 @@
   JSONB in normalized node rows and included in the canonical YAML definition.
   It can include a bounded, unique, ordered `sourceNodeIds` list for deterministic
   multi-agent output-file assembly; every ID must belong to the submitted graph
-  and the output-owning node must remain in the list. Optional `sourceHeaders`
-  are keyed by mapped node ID and provide bounded per-contributor section labels.
+  while any individual mapping can be removed. Optional `sourceHeaders` are
+  keyed by mapped node ID and provide bounded per-contributor section labels;
+  optional `position` coordinates persist a movable output target on the canvas.
   Migration `202608010007_persist_pipeline_uploads_in_azure.sql` adds the
   forced-RLS `project_uploads` metadata table, project-scoped upload listing,
   node media URL arrays, and an atomic pipeline-plus-upload-metadata save RPC.
@@ -114,6 +115,13 @@
   Migration `202608020008_enforce_pipeline_output_assembly.sql` adds deferred
   constraint triggers that require at least one agent and one output file in the
   final saved graph and validate ordered output sources and optional headers.
+  Migration `202608020010_expand_pipeline_output_connections.sql` permits source
+  and agent nodes to map independently to output targets, persists bounded target
+  positions, and leaves GitHub-source-to-output mappings optional. Pipeline save
+  still requires a source-connected agent flow and at least one output file.
+  Migration `202608020011_make_github_output_link_optional.sql` reapplies that
+  corrected guard for environments that previously ran migration `010` with a
+  mandatory direct source-to-output mapping.
   Repository-group upserts target the named primary-key constraint to avoid
   collisions between PL/pgSQL output variables and table column names.
 - **Backend Layer:**
@@ -167,11 +175,14 @@
     empty state. Automatic `+` edges persist a right-side anchor;
     manually drawn edges retain their selected top, bottom, or left anchor.
     Each node's `+` menu exposes Agent and Output actions; Output records a safe
-    parent path, file name, and supported file type, marks the node visually,
-    and creates a linked output-file target below the graph. The target can map
-    additional agent outputs through its picker or by receiving a drawn link from
-    an agent port, displays a link from every contributor, and offers explicit
-    up/down controls plus an optional header for every file assembly input.
+    parent path, file name, and supported file type and creates a draggable linked
+    target on the canvas. Source and agent nodes can map to targets through the
+    picker or drawn links. Connected agent headers turn orange immediately, and
+    every workflow or output link exposes a hover/focus delete affordance.
+    Removing a workflow link prunes non-source nodes with no remaining source
+    path. Each node has symmetric Inputs and Outputs dialogs; Outputs lists its
+    downstream agent nodes and output files. Output targets retain explicit
+    ordering controls plus an optional header for every file assembly input.
     Its node Inputs dialog combines upstream node links, reusable Azure-backed
     project uploads, and pending device files. Pending files remain in browser
     memory until Save Pipeline; selected files then upload once and their media
@@ -180,6 +191,36 @@
   verification services, a server-only versioned encryption key, Supabase RPC
   transport, Azure Blob Storage with environment-specific account/container/key,
   Node cryptography, Zod, and `js-yaml`.
+
+### Document Actions
+
+- **Business Purpose:** Start document creation from a repository group by
+  mapping it to an available pipeline, recording a distinct queued action, and
+  exposing those mappings in a filterable Actions workspace.
+- **Data Contracts & Schemas:**
+  `createProjectDocumentActionInputSchema` and
+  `projectDocumentActionSchema` in `src/types/projectAction.ts` validate the
+  two resource references and returned action summary. Migration
+  `202608020009_create_project_actions.sql` adds the forced-RLS
+  `project_actions` table, database-assigned `CREATE` type and `NEW` state,
+  composite same-project foreign keys, and restricted session-scoped list and
+  create RPCs.
+- **Backend Layer:**
+  - Services: `src/services/projectActionService.ts` hashes the opaque session
+    token, calls typed RPCs, and validates mapped rows.
+  - API Routes / Actions: `src/actions/projectActionActions.ts` validates the
+    mapping, reads the HTTP-only project session, sanitizes failures, and
+    revalidates the project page.
+- **Frontend Layer:**
+  - Pages: `src/app/project/page.tsx` loads the session-scoped action list with
+    the other project resources.
+  - Components: repository-group card/table actions and the pipeline-selection
+    dialog live in `ProjectResources.tsx`; `ActionsPanel.tsx` provides the new
+    Actions tab, repository-group and pipeline filters, responsive table rows,
+    empty states, action type, state, and creation details.
+- **Cross-Module Dependencies:** Project Vault sessions, Repository Groups,
+  Pipelines, the typed Supabase RPC adapter, Zod, and shared project UI
+  primitives.
 
 ### Product Tour Onboarding
 

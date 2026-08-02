@@ -14,9 +14,9 @@ client components, while validation, project ID generation, credential hashing,
 GitHub access verification, token encryption, and persistence remain server-side
 concerns.
 
-The project workspace owns six resource collections: repositories, reusable
+The project workspace owns seven resource collections: repositories, reusable
 repository groups, verified LLM connectors, project agents, visual pipelines,
-and reusable project uploads. A repository group can contain
+reusable project uploads, and document actions. A repository group can contain
 any combination of repository entries. Each entry chooses a branch, then uses
 custom GitHub-populated branch dropdown and an on-demand browser to select the
 whole repository, a folder, one file, or multiple files. Groups can alternatively
@@ -39,15 +39,21 @@ the source is an editor placeholder and deliberately does not select a concrete
 repository group. A node marked as output creates a linked output-file target;
 its output configuration stores an ordered list of contributing pipeline node
 IDs so multiple agent outputs can be assembled in a deterministic order, plus
-an optional bounded header for each contributor. Agent link ports can target
-either another workflow node or an existing output file. Every saved pipeline
-must contain at least one agent node and one output file. Files
+an optional bounded header for each contributor and a movable canvas position.
+Node link ports can target either another workflow node or an existing output
+file. Every saved pipeline must contain at least one agent node connected to the
+GitHub source flow and one output file; a direct GitHub-source-to-output-file
+mapping is optional. Files
 selected in the Pipeline Builder remain in browser
 memory until Save Pipeline. The server then writes them to an environment-specific
 Azure Blob container under
 `projectname_project_id/pipelinename_pipeline_id/uploads`, stores project-scoped
 file metadata in PostgreSQL, and persists only HTTPS media URLs in pipeline nodes
 and canonical YAML. File bytes never enter PostgreSQL.
+Document actions map one project repository group to one project pipeline. A
+Create document request persists a distinct action with database-assigned type
+`CREATE` and initial state `NEW`, then opens the Actions workspace where users
+can filter mappings by repository group or pipeline.
 
 ## Security & Trust Boundaries
 
@@ -73,7 +79,7 @@ section summarizes those boundaries at the system level.
 - Row Level Security is enabled and forced on `projects`, `project_sessions`,
   `repositories`, `project_repository_groups`, `project_llm_connectors`, and
   `project_agents`, plus `project_pipelines`, `project_pipeline_nodes`,
-  `project_pipeline_edges`, and `project_uploads`.
+  `project_pipeline_edges`, `project_uploads`, and `project_actions`.
   The `anon` and `authenticated` roles have no direct table privileges or
   policies.
 - Narrow `SECURITY DEFINER` RPC functions are the only public database surface.
@@ -135,16 +141,23 @@ section summarizes those boundaries at the system level.
   links from multiple upstream nodes. Removing an agent prunes nodes that are no
   longer reachable so a saved graph cannot retain broken branches. Ordered
   output-file mappings are schema-validated against nodes in the same submitted
-  graph and must retain the node that owns the output configuration. A deferred
+  graph. Workflow link removal immediately prunes every non-source node that is
+  no longer reachable from the GitHub source. A deferred
   PostgreSQL constraint trigger rechecks the final normalized graph after each
-  transaction, including the minimum-agent and minimum-output invariants, so
-  direct RPC callers cannot bypass them.
+  transaction, including the minimum-agent and minimum-output invariants, while
+  the graph constraint enforces source reachability. A direct source-to-output
+  mapping is not required, so direct RPC callers follow the same contract.
 - Pipeline file submissions use bounded multipart `FormData` only at save time.
   Server-side validation limits file count, individual and aggregate size,
   names, MIME types, and node assignments. Azure account name, container, and
   shared access key come only from validated environment configuration. The
   session-scoped upload RPC accepts metadata only, verifies every node URL
   belongs to the active project, and stores no binary column.
+- Document-action creation accepts only validated repository-group and pipeline
+  UUIDs. The RPC derives the project from the live session, verifies both
+  resources inside that project, and assigns `CREATE` plus `NEW` itself.
+  Composite foreign keys repeat the same-project constraint in PostgreSQL;
+  deleting either mapped resource cascades only its dependent actions.
 
 The project-password and short-lived project-session flow is the domain
 authentication mechanism for this accountless module, so it does not rely on a
@@ -221,6 +234,18 @@ Server Action to decrypt and recheck every saved connection, returning only
 Connected or a sanitized connection error.
 Repository-group upserts use the table's named primary-key constraint, keeping
 the SQL target unambiguous from the RPC's returned `id` field.
+
+### Create a Document Action
+
+`Repository group card/table -> choose available pipeline -> Zod Server Action
+-> project-session cookie -> document-action service -> session-authorized RPC
+-> same-project repository-group and pipeline checks -> forced-RLS
+project_actions -> Actions tab`
+
+The client submits no project ID, action type, or state. Each accepted request
+creates a separate mapping, even when the same repository group and pipeline
+were used before. The Actions tab filters the returned non-secret mappings by
+repository group and pipeline and shows their type, state, and creation time.
 
 ### Configure a Project Agent
 

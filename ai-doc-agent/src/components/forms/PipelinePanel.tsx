@@ -40,6 +40,10 @@ import {
   ModuleListControls,
   type ModuleListView,
 } from "@/components/ui/ModuleListControls";
+import {
+  ModuleProductTour,
+  type ModuleTourStep,
+} from "@/components/ui/ModuleProductTour";
 import { UiDropdown } from "@/components/ui/UiDropdown";
 import {
   parsePipelineYaml,
@@ -76,6 +80,51 @@ const NODE_GAP = 290;
 const OUTPUT_FILE_WIDTH = 230;
 const OUTPUT_FILE_HEIGHT = 112;
 const OUTPUT_FILE_GAP = 54;
+
+const pipelineBuilderTourSteps: ModuleTourStep[] = [
+  {
+    selector: "#tour-pipeline-builder-intro",
+    title: "Build the workflow",
+    description:
+      "This editor turns repository context into a connected sequence of agents and document outputs.",
+    placement: "bottom",
+  },
+  {
+    selector: "#tour-pipeline-identity",
+    title: "Name the outcome",
+    description:
+      "Give the pipeline a clear name and describe the document workflow it is responsible for.",
+    placement: "bottom",
+  },
+  {
+    selector: "#tour-pipeline-defaults",
+    title: "Choose sensible defaults",
+    description:
+      "Select the connector and model that new agents should inherit unless their own configuration overrides them.",
+    placement: "bottom",
+  },
+  {
+    selector: "#tour-pipeline-source",
+    title: "Start with repository context",
+    description:
+      "Every run begins here. The selected GitHub Repository Group supplies the source material at runtime.",
+    placement: "right",
+  },
+  {
+    selector: "#tour-pipeline-add",
+    title: "Extend the graph",
+    description:
+      "Use + to add an agent or define an output file. Drag a node port to connect additional branches and outputs.",
+    placement: "right",
+  },
+  {
+    selector: "#tour-pipeline-save",
+    title: "Complete and save",
+    description:
+      "A valid pipeline needs an agent connected to the repository flow and at least one output file.",
+    placement: "top",
+  },
+];
 
 type LinkAnchor = Exclude<PipelineEdgeAnchor, "right">;
 type EditorMode = "write" | "preview";
@@ -147,9 +196,7 @@ function formatFileSize(size: number) {
 
 function outputSourceNodeIds(node: PipelineNode) {
   if (!node.output) return [];
-  return node.output.sourceNodeIds?.length
-    ? node.output.sourceNodeIds
-    : [node.id];
+  return node.output.sourceNodeIds ?? [node.id];
 }
 
 function outputFilePath(output: PipelineNodeOutput) {
@@ -165,23 +212,135 @@ function pruneOutputMappings(nodes: PipelineNode[], remainingNodeIds: Set<string
     const sourceNodeIds = outputSourceNodeIds(node).filter((id) =>
       remainingNodeIds.has(id),
     );
-    const normalizedSourceNodeIds = sourceNodeIds.includes(node.id)
-      ? sourceNodeIds
-      : [node.id, ...sourceNodeIds];
     const sourceHeaders = Object.fromEntries(
       Object.entries(node.output.sourceHeaders ?? {}).filter(([sourceNodeId]) =>
-        normalizedSourceNodeIds.includes(sourceNodeId),
+        sourceNodeIds.includes(sourceNodeId),
       ),
     );
     return {
       ...node,
       output: {
         ...node.output,
-        sourceNodeIds: normalizedSourceNodeIds,
+        sourceNodeIds,
         sourceHeaders: Object.keys(sourceHeaders).length ? sourceHeaders : undefined,
       },
     };
   });
+}
+
+type PipelinePoint = { x: number; y: number };
+
+function connectionCurve(
+  start: PipelinePoint,
+  end: PipelinePoint,
+  startDirection: PipelinePoint,
+  endDirection: PipelinePoint,
+) {
+  const distance = Math.hypot(end.x - start.x, end.y - start.y);
+  const curve = Math.max(60, distance * 0.32);
+  const controlStart = {
+    x: start.x + startDirection.x * curve,
+    y: start.y + startDirection.y * curve,
+  };
+  const controlEnd = {
+    x: end.x + endDirection.x * curve,
+    y: end.y + endDirection.y * curve,
+  };
+  const midpoint = {
+    x: (start.x + 3 * controlStart.x + 3 * controlEnd.x + end.x) / 8,
+    y: (start.y + 3 * controlStart.y + 3 * controlEnd.y + end.y) / 8,
+  };
+  return {
+    path: `M ${start.x} ${start.y} C ${controlStart.x} ${controlStart.y}, ${controlEnd.x} ${controlEnd.y}, ${end.x} ${end.y}`,
+    midpoint,
+  };
+}
+
+function outputConnectionGeometry(
+  sourceNode: PipelineNode,
+  outputPosition: PipelinePoint,
+) {
+  const sourceCenter = {
+    x: sourceNode.position.x + NODE_WIDTH / 2,
+    y: sourceNode.position.y + NODE_HEIGHT / 2,
+  };
+  const outputCenter = {
+    x: outputPosition.x + OUTPUT_FILE_WIDTH / 2,
+    y: outputPosition.y + OUTPUT_FILE_HEIGHT / 2,
+  };
+  const deltaX = outputCenter.x - sourceCenter.x;
+  const deltaY = outputCenter.y - sourceCenter.y;
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+    const sourceAnchor: PipelineEdgeAnchor = deltaX >= 0 ? "right" : "left";
+    const start = anchorPoint(sourceNode, sourceAnchor);
+    const end = {
+      x: deltaX >= 0 ? outputPosition.x : outputPosition.x + OUTPUT_FILE_WIDTH,
+      y: outputCenter.y,
+    };
+    return connectionCurve(
+      start,
+      end,
+      anchorDirection(sourceAnchor),
+      { x: deltaX >= 0 ? -1 : 1, y: 0 },
+    );
+  }
+  const sourceAnchor: PipelineEdgeAnchor = deltaY >= 0 ? "bottom" : "top";
+  const start = anchorPoint(sourceNode, sourceAnchor);
+  const end = {
+    x: outputCenter.x,
+    y: deltaY >= 0 ? outputPosition.y : outputPosition.y + OUTPUT_FILE_HEIGHT,
+  };
+  return connectionCurve(
+    start,
+    end,
+    anchorDirection(sourceAnchor),
+    { x: 0, y: deltaY >= 0 ? -1 : 1 },
+  );
+}
+
+function PipelineConnection({
+  ariaLabel,
+  output = false,
+  path,
+  midpoint,
+  onRemove,
+}: {
+  ariaLabel: string;
+  output?: boolean;
+  path: string;
+  midpoint: PipelinePoint;
+  onRemove: () => void;
+}) {
+  return (
+    <g className={`pipeline-edge-interactive ${output ? "output" : "workflow"}`}>
+      <path
+        className={`pipeline-edge-visible ${output ? "pipeline-output-edge" : ""}`}
+        d={path}
+        markerEnd={output ? "url(#pipeline-output-arrow)" : "url(#pipeline-arrow)"}
+      />
+      <path className="pipeline-edge-hit" d={path} />
+      <g
+        aria-label={ariaLabel}
+        className="pipeline-edge-remove-indicator"
+        onClick={(event) => {
+          event.stopPropagation();
+          onRemove();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          onRemove();
+        }}
+        role="button"
+        tabIndex={0}
+        transform={`translate(${midpoint.x} ${midpoint.y})`}
+      >
+        <circle r="10" />
+        <line x1="-3" x2="3" y1="-3" y2="3" />
+        <line x1="3" x2="-3" y1="-3" y2="3" />
+      </g>
+    </g>
+  );
 }
 
 function reachableNodeIds(
@@ -596,6 +755,7 @@ export function PipelinePanel({
   const [editingOutputNodeId, setEditingOutputNodeId] = useState<string | null>(null);
   const [editingOutputMappingsNodeId, setEditingOutputMappingsNodeId] =
     useState<string | null>(null);
+  const [editingOutputsNodeId, setEditingOutputsNodeId] = useState<string | null>(null);
   const [outputDraft, setOutputDraft] = useState<PipelineNodeOutput>({
     parentPath: "/",
     fileName: "",
@@ -636,6 +796,13 @@ export function PipelinePanel({
     startY: number;
     nodeX: number;
     nodeY: number;
+  } | null>(null);
+  const [outputDrag, setOutputDrag] = useState<{
+    outputNodeId: string;
+    startX: number;
+    startY: number;
+    outputX: number;
+    outputY: number;
   } | null>(null);
   const normalizedPipelineQuery = pipelineQuery.trim().toLocaleLowerCase();
   const visiblePipelines = normalizedPipelineQuery
@@ -704,9 +871,11 @@ export function PipelinePanel({
     setExpandedNodeId(null);
     setEditingOutputNodeId(null);
     setEditingOutputMappingsNodeId(null);
+    setEditingOutputsNodeId(null);
     setLinkingFromNodeId(null);
     setLinkDrag(null);
     setLinkMessage("");
+    setOutputDrag(null);
     linkDragRef.current = null;
     setEditingInputsNodeId(null);
     setMemoryUploads([]);
@@ -786,6 +955,7 @@ export function PipelinePanel({
     );
     setOutputMessage("");
     setEditingOutputNodeId(node.id);
+    setEditingOutputsNodeId(null);
     setExpandedNodeId(null);
   };
 
@@ -795,8 +965,8 @@ export function PipelinePanel({
       ...outputDraft,
       parentPath: outputDraft.parentPath.trim() || "/",
       fileName: outputDraft.fileName.trim(),
-      sourceNodeIds: outputDraft.sourceNodeIds?.length
-        ? Array.from(new Set([editingOutputNodeId, ...outputDraft.sourceNodeIds]))
+      sourceNodeIds: outputDraft.sourceNodeIds
+        ? Array.from(new Set(outputDraft.sourceNodeIds))
         : [editingOutputNodeId],
     };
     if (!normalized.parentPath.startsWith("/")) {
@@ -895,7 +1065,6 @@ export function PipelinePanel({
   };
 
   const removeOutputSource = (outputNodeId: string, sourceNodeId: string) => {
-    if (outputNodeId === sourceNodeId) return;
     const outputNode = draft?.nodes.find((node) => node.id === outputNodeId);
     if (!outputNode?.output) return;
     updateOutputSourceOrder(
@@ -926,12 +1095,10 @@ export function PipelinePanel({
     if (!draft) return "The pipeline is not available.";
     const sourceNode = draft.nodes.find((node) => node.id === sourceNodeId);
     const outputNode = draft.nodes.find((node) => node.id === outputNodeId);
-    if (sourceNode?.kind !== "agent") {
-      return "Only an agent node can map its output to a file.";
-    }
+    if (!sourceNode) return "The selected source node is unavailable.";
     if (!outputNode?.output) return "The selected output file is unavailable.";
     if (outputSourceNodeIds(outputNode).includes(sourceNodeId)) {
-      return "This agent output is already mapped to that file.";
+      return "This node output is already mapped to that file.";
     }
     return null;
   };
@@ -1302,6 +1469,41 @@ export function PipelinePanel({
     });
   };
 
+  const beginOutputDrag = (
+    event: ReactPointerEvent<HTMLElement>,
+    outputNodeId: string,
+    position: PipelinePoint,
+  ) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setOutputDrag({
+      outputNodeId,
+      startX: event.clientX,
+      startY: event.clientY,
+      outputX: position.x,
+      outputY: position.y,
+    });
+  };
+
+  const moveOutputFile = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!draft || !outputDrag) return;
+    const x = Math.max(
+      0,
+      Math.min(4_000, Math.round(outputDrag.outputX + event.clientX - outputDrag.startX)),
+    );
+    const y = Math.max(
+      0,
+      Math.min(4_000, Math.round(outputDrag.outputY + event.clientY - outputDrag.startY)),
+    );
+    update({
+      nodes: draft.nodes.map((node) =>
+        node.id === outputDrag.outputNodeId && node.output
+          ? { ...node, output: { ...node.output, position: { x, y } } }
+          : node,
+      ),
+    });
+  };
+
   const save = async () => {
     if (!draft || saving) return;
     setSaving(true);
@@ -1379,6 +1581,15 @@ export function PipelinePanel({
     const incomingInputEdges = inputNode
       ? draft.edges.filter((edge) => edge.toNodeId === inputNode.id)
       : [];
+    const outputsNode = editingOutputsNodeId
+      ? draft.nodes.find((node) => node.id === editingOutputsNodeId) ?? null
+      : null;
+    const outputsNodeAgent = outputsNode?.kind === "agent"
+      ? agents.find((agent) => agent.id === outputsNode.agentId) ?? null
+      : null;
+    const outgoingOutputEdges = outputsNode
+      ? draft.edges.filter((edge) => edge.fromNodeId === outputsNode.id)
+      : [];
     const outputNode = editingOutputNodeId
       ? draft.nodes.find((node) => node.id === editingOutputNodeId) ?? null
       : null;
@@ -1400,9 +1611,12 @@ export function PipelinePanel({
         ownerNode: node,
         output: node.output,
         sourceNodeIds: outputSourceNodeIds(node),
-        x: 48 + index * (OUTPUT_FILE_WIDTH + OUTPUT_FILE_GAP),
-        y: outputLaneY,
+        x: node.output.position?.x ?? 48 + index * (OUTPUT_FILE_WIDTH + OUTPUT_FILE_GAP),
+        y: node.output.position?.y ?? outputLaneY,
       }));
+    const linkedOutputFiles = outputsNode
+      ? outputFiles.filter((file) => file.sourceNodeIds.includes(outputsNode.id))
+      : [];
     const canvasWidth = Math.max(
       980,
       ...draft.nodes.map((node) => node.position.x + NODE_WIDTH + 80),
@@ -1414,11 +1628,21 @@ export function PipelinePanel({
       ...outputFiles.map((file) => file.y + OUTPUT_FILE_HEIGHT + 80),
     );
     const hasAgentNode = draft.nodes.some((node) => node.kind === "agent");
-    const canSavePipeline = hasAgentNode && outputFiles.length > 0;
+    const sourceNode = draft.nodes.find((node) => node.kind === "source");
+    const hasRepositoryAgentLink = Boolean(
+      sourceNode && draft.edges.some((edge) => edge.fromNodeId === sourceNode.id),
+    );
+    const canSavePipeline =
+      hasAgentNode && outputFiles.length > 0 && hasRepositoryAgentLink;
+    const renderedConnectionCount =
+      draft.edges.length + outputFiles.reduce(
+        (count, file) => count + file.sourceNodeIds.length,
+        0,
+      );
     const activeLinkSourceId = linkDrag?.fromNodeId ?? linkingFromNodeId;
     return (
       <section className="project-resource-editor pipeline-editor">
-        <header className="compact-editor-header">
+        <header className="compact-editor-header" id="tour-pipeline-builder-intro">
           <div>
             <p className="eyebrow">Visual workflow</p>
             <h2>{draft.id ? "Edit pipeline" : "New pipeline"}</h2>
@@ -1434,7 +1658,7 @@ export function PipelinePanel({
           </button>
         </header>
 
-        <div className="pipeline-identity-grid">
+        <div className="pipeline-identity-grid" id="tour-pipeline-identity">
           <label className="field-group">
             <span className="field-label">Pipeline name</span>
             <input
@@ -1460,7 +1684,7 @@ export function PipelinePanel({
           </label>
         </div>
 
-        <div className="pipeline-defaults-grid">
+        <div className="pipeline-defaults-grid" id="tour-pipeline-defaults">
           <div className="field-group">
             <span className="field-label">Default LLM connector</span>
             <LlmConnectorDropdown
@@ -1532,10 +1756,15 @@ export function PipelinePanel({
         <div className="pipeline-canvas-heading">
           <div>
             <strong>Pipeline canvas</strong>
-            <span>{draft.nodes.length} nodes · {draft.edges.length} connections</span>
+            <span>{draft.nodes.length} nodes · {renderedConnectionCount} connections</span>
           </div>
           <div className="pipeline-canvas-tools">
             <small>Use + to add an agent. Hover a node to draw additional links.</small>
+            <ModuleProductTour
+              moduleId="pipeline-builder"
+              moduleName="Pipeline Builder"
+              steps={pipelineBuilderTourSteps}
+            />
             <button className="pipeline-yaml-download" onClick={() => downloadPipelineYaml(draft)} type="button">
               <DocumentIcon width={13} height={13} /> Download YAML
             </button>
@@ -1546,8 +1775,8 @@ export function PipelinePanel({
             <LinkIcon width={14} height={14} />
             <span>
               {linkDrag
-                ? "Drag onto a highlighted node and release to connect. Release elsewhere to cancel."
-                : "Select a highlighted node to complete the link."}
+                ? "Drag onto a highlighted node or output target and release to connect. Release elsewhere to cancel."
+                : "Select a highlighted node or output target to complete the link."}
             </span>
             <button
               onClick={() => {
@@ -1575,7 +1804,7 @@ export function PipelinePanel({
             ref={canvasRef}
             style={{ height: canvasHeight, width: canvasWidth }}
           >
-            <svg aria-hidden="true" className="pipeline-edges" height={canvasHeight} width={canvasWidth}>
+            <svg aria-label="Pipeline connections" className="pipeline-edges" height={canvasHeight} width={canvasWidth}>
               <defs>
                 <marker id="pipeline-arrow" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
                   <path d="M0,0 L8,4 L0,8 Z" />
@@ -1594,34 +1823,40 @@ export function PipelinePanel({
                 const end = anchorPoint(to, toAnchor);
                 const startDirection = anchorDirection(fromAnchor);
                 const endDirection = anchorDirection(toAnchor);
-                const distance = Math.hypot(end.x - start.x, end.y - start.y);
-                const curve = Math.max(60, distance * 0.32);
+                const geometry = connectionCurve(
+                  start,
+                  end,
+                  startDirection,
+                  endDirection,
+                );
                 return (
-                  <path
-                    d={`M ${start.x} ${start.y} C ${start.x + startDirection.x * curve} ${start.y + startDirection.y * curve}, ${end.x + endDirection.x * curve} ${end.y + endDirection.y * curve}, ${end.x} ${end.y}`}
+                  <PipelineConnection
+                    ariaLabel="Remove workflow connection"
                     key={edge.id}
-                    markerEnd="url(#pipeline-arrow)"
+                    midpoint={geometry.midpoint}
+                    onRemove={() => removeEdgeAndPrune(edge.id)}
+                    path={geometry.path}
                   />
                 );
               })}
               {outputFiles.flatMap((file) =>
-                file.sourceNodeIds.map((sourceNodeId, orderIndex) => {
+                file.sourceNodeIds.map((sourceNodeId) => {
                   const sourceNode = draft.nodes.find(
                     (node) => node.id === sourceNodeId,
                   );
                   if (!sourceNode) return null;
-                  const startX = sourceNode.position.x + NODE_WIDTH / 2;
-                  const startY = sourceNode.position.y + NODE_HEIGHT;
-                  const endX = file.x + OUTPUT_FILE_WIDTH / 2;
-                  const endY = file.y;
-                  const curve = Math.max(70, (endY - startY) * 0.42);
+                  const geometry = outputConnectionGeometry(sourceNode, {
+                    x: file.x,
+                    y: file.y,
+                  });
                   return (
-                    <path
-                      className="pipeline-output-edge"
-                      d={`M ${startX} ${startY} C ${startX} ${startY + curve}, ${endX} ${endY - curve}, ${endX} ${endY}`}
+                    <PipelineConnection
+                      ariaLabel="Remove output-file connection"
                       key={`${file.ownerNode.id}:${sourceNodeId}`}
-                      markerEnd="url(#pipeline-output-arrow)"
-                      style={{ opacity: Math.max(0.46, 1 - orderIndex * 0.08) }}
+                      midpoint={geometry.midpoint}
+                      onRemove={() => removeOutputSource(file.ownerNode.id, sourceNodeId)}
+                      output
+                      path={geometry.path}
                     />
                   );
                 }),
@@ -1653,6 +1888,14 @@ export function PipelinePanel({
               ).length;
               const uploadCount =
                 node.inputMediaUrls.length + (nodeUploadIds[node.id] ?? []).length;
+              const outgoingAgentCount = draft.edges.filter(
+                (edge) => edge.fromNodeId === node.id,
+              ).length;
+              const connectedOutputCount = outputFiles.filter((file) =>
+                file.sourceNodeIds.includes(node.id),
+              ).length;
+              const hasOutputConnection =
+                node.kind === "agent" && connectedOutputCount > 0;
               const isLinkTarget = Boolean(
                 activeLinkSourceId &&
                 canConnectNodes(activeLinkSourceId, node.id),
@@ -1666,13 +1909,14 @@ export function PipelinePanel({
               return (
                 <article
                   className={`pipeline-node pipeline-node-${node.kind} ${
-                    node.output ? "pipeline-node-output" : ""
+                    hasOutputConnection ? "pipeline-node-output-connected" : ""
                   } ${
                     activeLinkSourceId === node.id ? "linking-source" : ""
                   } ${isLinkTarget ? "link-target" : ""} ${
                     isCircularTarget ? "circular-target" : ""
                   }`}
                   data-pipeline-node-id={node.id}
+                  id={node.kind === "source" ? "tour-pipeline-source" : undefined}
                   key={node.id}
                   style={{ left: node.position.x, top: node.position.y }}
                 >
@@ -1693,11 +1937,6 @@ export function PipelinePanel({
                       <small>{node.kind === "source" ? "PIPELINE START" : "PROJECT AGENT"}</small>
                       <strong>{node.kind === "source" ? "GitHub Repository Group" : agent?.name ?? "Unavailable agent"}</strong>
                       <em>{node.kind === "source" ? "Runtime source placeholder" : agent?.model ?? "Removed from project"}</em>
-                      {node.output ? (
-                        <b className="pipeline-node-output-mark">
-                          OUTPUT FILE · {outputFilePath(node.output)}
-                        </b>
-                      ) : null}
                     </span>
                   </div>
                   {node.kind === "agent" ? (
@@ -1714,6 +1953,7 @@ export function PipelinePanel({
                     aria-expanded={expandedNodeId === node.id}
                     aria-label={`Show add options for ${node.kind === "source" ? "GitHub Repository Group" : agent?.name ?? "this node"}`}
                     className="pipeline-node-add"
+                    id={node.kind === "source" ? "tour-pipeline-add" : undefined}
                     onClick={() =>
                       setExpandedNodeId((current) =>
                         current === node.id ? null : node.id,
@@ -1763,6 +2003,14 @@ export function PipelinePanel({
                   >
                     Inputs <span>{incomingCount + uploadCount}</span>
                   </button>
+                  <button
+                    aria-label={`Manage outputs for ${node.kind === "source" ? "GitHub Repository Group" : agent?.name ?? "this node"}`}
+                    className="pipeline-node-outputs"
+                    onClick={() => setEditingOutputsNodeId(node.id)}
+                    type="button"
+                  >
+                    Outputs <span>{outgoingAgentCount + connectedOutputCount}</span>
+                  </button>
                   {isLinkTarget ? (
                     <button
                       className="pipeline-node-link-target"
@@ -1789,7 +2037,7 @@ export function PipelinePanel({
                 className="pipeline-output-lane-label"
                 style={{ top: outputLaneY - 42 }}
               >
-                Output files · ordered assembly targets
+                Output targets · drag to position
               </div>
             ) : null}
             {outputFiles.map((file) => {
@@ -1799,12 +2047,19 @@ export function PipelinePanel({
               );
               return (
                 <article
-                  className={`pipeline-output-file ${canMapActiveNode ? "link-target" : ""}`}
+                  className={`pipeline-output-file ${canMapActiveNode ? "link-target" : ""} ${outputDrag?.outputNodeId === file.ownerNode.id ? "dragging" : ""}`}
                   data-pipeline-output-node-id={file.ownerNode.id}
                   key={`output-file:${file.ownerNode.id}`}
                   style={{ left: file.x, top: file.y }}
                 >
-                <header>
+                <header
+                  onPointerCancel={() => setOutputDrag(null)}
+                  onPointerDown={(event) =>
+                    beginOutputDrag(event, file.ownerNode.id, { x: file.x, y: file.y })
+                  }
+                  onPointerMove={moveOutputFile}
+                  onPointerUp={() => setOutputDrag(null)}
+                >
                   <span><DocumentIcon width={17} height={17} /></span>
                   <small>OUTPUT FILE</small>
                 </header>
@@ -1848,10 +2103,10 @@ export function PipelinePanel({
         {fields.nodes || fields.edges ? (
           <p className="field-error">{fields.nodes ?? fields.edges}</p>
         ) : null}
-        <footer className="compact-editor-actions">
+        <footer className="compact-editor-actions" id="tour-pipeline-save">
           {!canSavePipeline ? (
             <p className="pipeline-save-requirement" role="status">
-              Add at least one agent node and one output file before saving.
+              Add an output file and connect at least one agent to the GitHub source flow before saving.
             </p>
           ) : null}
           <button className="button-secondary" onClick={() => setDraft(null)} type="button">
@@ -2042,7 +2297,7 @@ export function PipelinePanel({
               </p>
 
               <div className="pipeline-output-order-list">
-                {outputSourceNodeIds(outputMappingsNode).map((sourceId, index, sourceIds) => {
+                {outputSourceNodeIds(outputMappingsNode).length ? outputSourceNodeIds(outputMappingsNode).map((sourceId, index, sourceIds) => {
                   const sourceNode = draft.nodes.find((node) => node.id === sourceId);
                   const sourceAgent = sourceNode?.kind === "agent"
                     ? agents.find((agent) => agent.id === sourceNode.agentId)
@@ -2102,7 +2357,6 @@ export function PipelinePanel({
                         </button>
                         <button
                           aria-label={`Remove input ${index + 1}`}
-                          disabled={sourceId === outputMappingsNode.id}
                           onClick={() => removeOutputSource(outputMappingsNode.id, sourceId)}
                           type="button"
                         >
@@ -2111,29 +2365,31 @@ export function PipelinePanel({
                       </div>
                     </div>
                   );
-                })}
+                }) : (
+                  <p className="pipeline-picker-empty">No node outputs are mapped to this file.</p>
+                )}
               </div>
 
               <div className="pipeline-input-section pipeline-output-source-picker">
                 <header>
                   <div>
-                    <strong>Map another agent output</strong>
-                    <small>Added outputs are appended, then can be reordered above.</small>
+                    <strong>Map another node output</strong>
+                    <small>Add the GitHub source or an agent, then reorder it above.</small>
                   </div>
                   <PlusIcon width={16} height={16} />
                 </header>
                 {draft.nodes.some(
                   (node) =>
-                    node.kind === "agent" &&
                     !outputSourceNodeIds(outputMappingsNode).includes(node.id),
                 ) ? (
                   <div className="pipeline-output-source-options">
                     {draft.nodes.flatMap((node) => {
                       if (
-                        node.kind !== "agent" ||
                         outputSourceNodeIds(outputMappingsNode).includes(node.id)
                       ) return [];
-                      const agent = agents.find((item) => item.id === node.agentId);
+                      const agent = node.kind === "agent"
+                        ? agents.find((item) => item.id === node.agentId)
+                        : null;
                       return [
                         <button
                           key={node.id}
@@ -2141,8 +2397,8 @@ export function PipelinePanel({
                           type="button"
                         >
                           <span>
-                            <strong>{agent?.name ?? "Unavailable agent"}</strong>
-                            <small>{agent?.model ?? "Removed from project"}</small>
+                            <strong>{node.kind === "source" ? "GitHub Repository Group" : agent?.name ?? "Unavailable agent"}</strong>
+                            <small>{node.kind === "source" ? "Pipeline source" : agent?.model ?? "Removed from project"}</small>
                           </span>
                           <PlusIcon width={13} height={13} />
                         </button>,
@@ -2158,6 +2414,121 @@ export function PipelinePanel({
                 <button
                   className="button-primary"
                   onClick={() => setEditingOutputMappingsNodeId(null)}
+                  type="button"
+                >
+                  Done
+                </button>
+              </div>
+            </section>
+          </div>
+        ) : null}
+        {outputsNode ? (
+          <div className="dialog-backdrop" role="presentation">
+            <section
+              aria-label="Node outputs"
+              aria-modal="true"
+              className="confirmation-dialog pipeline-input-dialog pipeline-outputs-dialog"
+              role="dialog"
+            >
+              <button
+                aria-label="Close node outputs"
+                className="dialog-close"
+                onClick={() => setEditingOutputsNodeId(null)}
+                type="button"
+              >
+                <XIcon />
+              </button>
+              <p className="eyebrow">Node configuration</p>
+              <h2>Outputs</h2>
+              <p>
+                {outputsNode.kind === "source"
+                  ? "GitHub Repository Group"
+                  : outputsNodeAgent?.name ?? "Agent node"} sends output to the agent nodes and files listed below.
+              </p>
+
+              <div className="pipeline-input-section">
+                <header>
+                  <div>
+                    <strong>Agent nodes</strong>
+                    <small>{outgoingOutputEdges.length} connected</small>
+                  </div>
+                  <LayersIcon width={16} height={16} />
+                </header>
+                {outgoingOutputEdges.length ? (
+                  <div className="pipeline-linked-inputs">
+                    {outgoingOutputEdges.map((edge) => {
+                      const targetNode = draft.nodes.find(
+                        (node) => node.id === edge.toNodeId,
+                      );
+                      const targetAgent = targetNode?.kind === "agent"
+                        ? agents.find((agent) => agent.id === targetNode.agentId)
+                        : null;
+                      return (
+                        <div key={edge.id}>
+                          <span>
+                            <LinkIcon width={12} height={12} />
+                            <strong>{targetAgent?.name ?? "Agent node"}</strong>
+                          </span>
+                          <button
+                            aria-label={`Remove output link to ${targetAgent?.name ?? "agent node"}`}
+                            onClick={() => removeEdgeAndPrune(edge.id)}
+                            type="button"
+                          >
+                            <XIcon width={12} height={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="pipeline-picker-empty">No agent nodes receive this output.</p>
+                )}
+              </div>
+
+              <div className="pipeline-input-section">
+                <header>
+                  <div>
+                    <strong>Output files</strong>
+                    <small>{linkedOutputFiles.length} connected</small>
+                  </div>
+                  <DocumentIcon width={16} height={16} />
+                </header>
+                {linkedOutputFiles.length ? (
+                  <div className="pipeline-linked-inputs pipeline-linked-output-files">
+                    {linkedOutputFiles.map((file) => (
+                      <div key={file.ownerNode.id}>
+                        <span>
+                          <DocumentIcon width={12} height={12} />
+                          <strong>{outputFilePath(file.output)}</strong>
+                        </span>
+                        <div>
+                          <button
+                            aria-label={`Configure ${outputFilePath(file.output)}`}
+                            onClick={() => openOutputEditor(file.ownerNode)}
+                            type="button"
+                          >
+                            <PencilIcon width={12} height={12} />
+                          </button>
+                          <button
+                            aria-label={`Remove output link to ${outputFilePath(file.output)}`}
+                            onClick={() => removeOutputSource(file.ownerNode.id, outputsNode.id)}
+                            type="button"
+                          >
+                            <XIcon width={12} height={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="pipeline-picker-empty">No output files receive this node output.</p>
+                )}
+              </div>
+
+              <div className="dialog-actions pipeline-input-actions">
+                <button
+                  className="button-primary"
+                  onClick={() => setEditingOutputsNodeId(null)}
                   type="button"
                 >
                   Done
@@ -2313,10 +2684,10 @@ export function PipelinePanel({
                             <span><GitHubIcon width={14} height={14} /></span>
                             <i />
                             <strong>{agentCount}</strong>
-                            <small>agent {agentCount === 1 ? "node" : "nodes"}</small>
+                            <small>{agentCount === 1 ? "agent" : "agents"}</small>
                             <i />
                             <strong>{outputCount}</strong>
-                            <small>output {outputCount === 1 ? "file" : "files"}</small>
+                            <small>{outputCount === 1 ? "output" : "outputs"}</small>
                           </div>
                         </button>
                         <footer>
@@ -2419,7 +2790,7 @@ export function PipelinePanel({
       {deletingPipeline ? (
         <DeleteConfirmationDialog
           confirmLabel="Delete pipeline"
-          description={`This permanently deletes the ${deletingPipeline.name} pipeline and its canvas configuration. Project agents are not deleted.`}
+          description={`This permanently deletes the ${deletingPipeline.name} pipeline, its canvas configuration, and any document actions mapped to it. Project agents are not deleted.`}
           onClose={() => setDeletingPipeline(null)}
           onConfirm={() => remove(deletingPipeline)}
           pendingLabel="Deleting pipeline…"

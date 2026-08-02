@@ -137,6 +137,7 @@ interface to list or revoke all other sessions without deleting the project.
 | Discover models for an agent | Live project session and a validated connector identifier | The same-origin route resolves the connector inside the session-derived project, decrypts its credential only on the server, and returns only sanitized provider model metadata |
 | List/save/delete project agents | Live project session and validated agent input | Agent rows are joined or mutated only through the session-derived project; connector/model references must use a connector saved in that project, and output behavior/type must match database-enforced values |
 | List/save/delete project pipelines and list/save project uploads | Live project session plus validated versioned YAML/graph and bounded multipart upload input | Pipeline, default connector/model, node, edge, anchor, agent, and media references are resolved inside the session-derived project; PostgreSQL enforces one source, full reachability, an acyclic graph, and project ownership of every media URL |
+| List/create document actions | Live project session and validated repository-group/pipeline UUIDs | The RPC derives the project from the session, verifies both mapped resources belong to it, and assigns immutable initial values `CREATE` and `NEW`; composite foreign keys prevent cross-project mappings |
 | Logout | Current session token, when present | Deletes only the matching session |
 
 Exact-name confirmation reduces accidental destructive actions; it is not an
@@ -149,7 +150,7 @@ The database is the final project-isolation boundary:
 - Row Level Security is enabled and forced on `projects`, `project_sessions`,
   `repositories`, `project_repository_groups`, `project_llm_connectors`, and
   `project_agents`, plus `project_pipelines`, `project_pipeline_nodes`,
-  `project_pipeline_edges`, and `project_uploads`.
+  `project_pipeline_edges`, `project_uploads`, and `project_actions`.
 - Direct table privileges are revoked from `anon` and `authenticated`.
 - No permissive client table policies provide an alternate data path.
 - Narrow `SECURITY DEFINER` functions are the intended public database
@@ -283,16 +284,17 @@ inference quota or future availability.
   agents in the session project, edges must be unique and acyclic, and every
   node must be reachable from the source. Multiple upstream nodes may feed one
   agent node. A final saved graph must also contain at least one agent node and
-  one output file; deferred database triggers enforce these invariants after the
-  normalized graph replacement completes.
+  one output file. A direct GitHub-source-to-output-file mapping is optional;
+  deferred database triggers enforce the graph, agent, and output invariants
+  after the normalized graph replacement completes.
 - Optional node output configuration is schema-validated and database-checked
   for a bounded absolute parent path without traversal segments, a bounded file
   name without separators, and an allow-listed file type. Its optional ordered
-  source-node list is unique and bounded, may reference only nodes in the same
-  validated graph, may add only agent nodes beyond the owner, and must include
-  the node that owns the output file. Each mapped source may have one optional
-  bounded header. These mappings express deterministic assembly order and grant
-  no project authority; Zod and a deferred database trigger both validate them.
+  source-node list is unique and bounded and may reference only nodes in the
+  same validated graph. Each mapped source may have one optional bounded header,
+  and the output target may persist a bounded integer canvas position. These
+  mappings express deterministic assembly order and grant no project authority;
+  Zod and a deferred database trigger both validate them.
 - Optional node media inputs contain only unique HTTPS URLs. A save can add at
   most 20 files, each between 1 byte and 10 MB, with at most 50 MB total; each
   node can reference at most 20 project uploads. The action validates file
@@ -322,6 +324,25 @@ inference quota or future availability.
   origin foreign key becomes null. Deleting the project removes all upload
   metadata and triggers best-effort deletion of its Azure blobs. Failed external
   cleanup is logged server-side without exposing the storage credential.
+
+## Document Action Authorization
+
+- `createProjectDocumentActionAction` validates the repository-group and
+  pipeline UUIDs before reading the HTTP-only project session or calling the
+  server-only service. It accepts no project ID, action type, or state.
+- The list and create RPCs derive `project_id` from an unexpired project
+  session. Both referenced resources must match that derived project before an
+  action is inserted.
+- `project_actions` has forced RLS and no direct `anon` or `authenticated`
+  table privileges. Narrow security-definer RPCs are the only client-facing
+  database surface.
+- Composite `(project_id, repository_group_id)` and
+  `(project_id, pipeline_id)` foreign keys enforce project isolation even if a
+  future caller bypasses the service layer. The database, not the browser,
+  assigns action type `CREATE` and initial state `NEW`.
+- Deleting a repository group or pipeline cascades only actions mapped to that
+  same project resource. An action contains identifiers and workflow state, not
+  repository credentials, connector credentials, or generated document bytes.
 
 ## Mandatory Rules for Future Changes
 
@@ -363,6 +384,8 @@ projects and verify:
 - a valid Project A session cannot read Project B workspace or repositories;
 - a valid Project A session cannot mutate or delete a Project B resource even
   when given its real UUID and name;
+- a valid Project A session cannot create an action using a Project B
+  repository group or pipeline UUID;
 - a caller-supplied project or user identifier cannot override session scope;
 - direct `anon` table reads and writes remain denied;
 - RPC overloads and grants expose only intended function signatures;

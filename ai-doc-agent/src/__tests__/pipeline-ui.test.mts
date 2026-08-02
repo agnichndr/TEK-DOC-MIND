@@ -66,10 +66,10 @@ test("pipeline canvas begins with a dummy GitHub source and adds agents", async 
   assert.match(source, /Kept in memory until you save the pipeline/);
   assert.match(source, /new FormData\(\)/);
   assert.match(source, /saveProjectPipelineAction\(formData\)/);
-  assert.match(source, /Output files · ordered assembly targets/);
+  assert.match(source, /Output targets · drag to position/);
   assert.match(source, /pipeline-output-edge/);
   assert.match(source, /Arrange inputs/);
-  assert.match(source, /Map another agent output/);
+  assert.match(source, /Map another node output/);
   assert.match(source, /assembled in the exact order below/);
   assert.match(source, /moveOutputSource/);
   assert.match(source, /data-pipeline-output-node-id/);
@@ -77,8 +77,18 @@ test("pipeline canvas begins with a dummy GitHub source and adds agents", async 
   assert.match(source, /Map output here/);
   assert.match(source, /Optional header/);
   assert.match(source, /updateOutputSourceHeader/);
-  assert.match(source, /Add at least one agent node and one output file before saving/);
+  assert.match(source, /connect at least one agent to the GitHub source flow before saving/);
   assert.match(source, /disabled=\{saving \|\| !canSavePipeline\}/);
+  assert.match(source, /beginOutputDrag/);
+  assert.match(source, /moveOutputFile/);
+  assert.match(source, /pipeline-node-output-connected/);
+  assert.match(source, /PipelineConnection/);
+  assert.match(source, /pipeline-edge-remove-indicator/);
+  assert.match(source, /Remove workflow connection/);
+  assert.match(source, /Remove output-file connection/);
+  assert.match(source, /<h2>Outputs<\/h2>/);
+  assert.match(source, /Agent nodes/);
+  assert.match(source, /Output files/);
 });
 
 test("pipeline library follows the module UI guide", async () => {

@@ -2872,6 +2872,39 @@ a {
   font-size: 9px;
 }
 
+/* Final action controls: multi-select filters and solid document CTA. */
+.repository-group-card > footer > button.button-primary.repository-group-create-action,
+.module-table-actions > button.module-create-document-action {
+  border: 1px solid #101010;
+  color: #fff;
+  background: #101010;
+}
+
+.repository-group-card > footer > button.button-primary.repository-group-create-action:hover,
+.module-table-actions > button.module-create-document-action:hover {
+  border-color: #292929;
+  color: #fff;
+  background: #292929;
+}
+
+.action-multi-select-menu {
+  z-index: 20;
+}
+
+.action-multi-select-options {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.action-multi-select-options > button {
+  min-height: 42px;
+}
+
+.action-multi-select-options > button[aria-selected="true"] {
+  color: var(--ink);
+  background: var(--wash);
+}
+
 /* Repository-group document actions and action queue */
 .project-resources > .project-resource-tabs {
   overflow-x: auto;
@@ -3253,7 +3286,7 @@ a {
 }
 
 .pipeline-card-flow > i {
-  width: 38px;
+  width: 22px;
   height: 1px;
   background: var(--line-dark);
 }
@@ -3457,17 +3490,65 @@ a {
   fill: #8e8e88;
 }
 
-.pipeline-edges .pipeline-output-edge {
+.pipeline-edges path.pipeline-output-edge {
   stroke: #c66a18;
   stroke-width: 2;
   stroke-dasharray: 5 4;
+}
+
+.pipeline-edge-interactive {
+  pointer-events: none;
+}
+
+.pipeline-edge-visible {
+  pointer-events: none;
+}
+
+.pipeline-edges path.pipeline-edge-hit {
+  pointer-events: stroke;
+  stroke: transparent;
+  stroke-width: 18;
+  cursor: pointer;
+}
+
+.pipeline-edge-remove-indicator {
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.pipeline-edge-interactive:hover .pipeline-edge-remove-indicator,
+.pipeline-edge-remove-indicator:focus {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pipeline-edge-remove-indicator circle {
+  fill: var(--surface);
+  stroke: var(--danger);
+  stroke-width: 1.5;
+}
+
+.pipeline-edge-remove-indicator line {
+  stroke: var(--danger);
+  stroke-linecap: round;
+  stroke-width: 1.6;
+}
+
+.pipeline-edge-remove-indicator:focus {
+  outline: none;
+}
+
+.pipeline-edge-remove-indicator:focus circle {
+  stroke-width: 2.5;
 }
 
 .pipeline-edges marker .pipeline-output-arrow-head {
   fill: #c66a18;
 }
 
-.pipeline-edges .pipeline-edge-preview {
+.pipeline-edges path.pipeline-edge-preview {
   stroke: #7762c8;
   stroke-width: 2;
   stroke-dasharray: 6 5;
@@ -3493,7 +3574,7 @@ a {
   border-top: 3px solid #7762c8;
 }
 
-.pipeline-node-output {
+.pipeline-node-output-connected {
   border-top: 4px solid #d97706;
 }
 
@@ -3753,6 +3834,19 @@ a {
 .pipeline-output-file header {
   gap: 6px;
   color: #8a4b12;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.pipeline-output-file header:active,
+.pipeline-output-file.dragging header {
+  cursor: grabbing;
+}
+
+.pipeline-output-file.dragging {
+  z-index: 6;
+  box-shadow: 8px 10px 0 rgb(154 85 23 / 14%);
 }
 
 .pipeline-output-file header > span {
@@ -4114,10 +4208,10 @@ a {
   }
 }
 
-.pipeline-node-inputs {
+.pipeline-node-inputs,
+.pipeline-node-outputs {
   position: absolute;
   bottom: 7px;
-  left: 10px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -4133,7 +4227,16 @@ a {
   text-transform: uppercase;
 }
 
-.pipeline-node-inputs span {
+.pipeline-node-inputs {
+  left: 10px;
+}
+
+.pipeline-node-outputs {
+  right: 10px;
+}
+
+.pipeline-node-inputs span,
+.pipeline-node-outputs span {
   display: grid;
   min-width: 15px;
   height: 15px;
@@ -4142,6 +4245,21 @@ a {
   color: white;
   background: var(--ink);
   font-size: 6px;
+}
+
+.pipeline-node-output-connected .pipeline-node-outputs span {
+  background: #c66a18;
+}
+
+.pipeline-linked-output-files > div > div {
+  display: flex;
+  flex: none;
+  gap: 5px;
+}
+
+.pipeline-linked-output-files > div > div button:first-child {
+  color: #55449e;
+  background: #f2effc;
 }
 
 .pipeline-node.linking-source {
@@ -4250,6 +4368,7 @@ a {
 .pipeline-node-remove:focus-visible,
 .pipeline-node-link-port:focus-visible,
 .pipeline-node-inputs:focus-visible,
+.pipeline-node-outputs:focus-visible,
 .pipeline-node-link-target:focus-visible,
 .pipeline-card button:focus-visible,
 .pipeline-agent-options button:focus-visible {

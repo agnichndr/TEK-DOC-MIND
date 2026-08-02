@@ -38,6 +38,11 @@ export const pipelineOutputFileTypeSchema = z.enum([
   "svg",
 ]);
 
+const pipelinePositionSchema = z.object({
+  x: z.number().int().min(0).max(4_000),
+  y: z.number().int().min(0).max(4_000),
+});
+
 const pipelineNodeOutputSchema = z.object({
   parentPath: z
     .string()
@@ -59,13 +64,13 @@ const pipelineNodeOutputSchema = z.object({
   fileType: pipelineOutputFileTypeSchema,
   sourceNodeIds: z
     .array(z.uuid("Invalid output source node."))
-    .min(1, "An output file requires at least one mapped node.")
     .max(50, "An output file cannot combine more than 50 node outputs.")
     .refine(
       (ids) => new Set(ids).size === ids.length,
       "Output source nodes must be unique.",
     )
     .optional(),
+  position: pipelinePositionSchema.optional(),
   sourceHeaders: z
     .record(
       z.uuid("Invalid output header source node."),
@@ -76,11 +81,6 @@ const pipelineNodeOutputSchema = z.object({
         .max(200, "Output headers cannot exceed 200 characters."),
     )
     .optional(),
-});
-
-const pipelinePositionSchema = z.object({
-  x: z.number().int().min(0).max(4_000),
-  y: z.number().int().min(0).max(4_000),
 });
 
 const pipelineSourceNodeSchema = z.object({
@@ -174,29 +174,10 @@ export const projectPipelineInputSchema = z
     for (const [index, node] of pipeline.nodes.entries()) {
       if (!node.output) continue;
       const sourceNodeIds = node.output.sourceNodeIds ?? [node.id];
-      if (!sourceNodeIds.includes(node.id)) {
-        context.addIssue({
-          code: "custom",
-          message: "An output file must include the node marked as its output.",
-          path: ["nodes", index, "output", "sourceNodeIds"],
-        });
-      }
       if (sourceNodeIds.some((sourceId) => !nodesById.has(sourceId))) {
         context.addIssue({
           code: "custom",
           message: "Every output file source must reference a pipeline node.",
-          path: ["nodes", index, "output", "sourceNodeIds"],
-        });
-      }
-      if (
-        sourceNodeIds.some(
-          (sourceId) =>
-            sourceId !== node.id && nodesById.get(sourceId)?.kind !== "agent",
-        )
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: "Only agent outputs can be mapped into another output file.",
           path: ["nodes", index, "output", "sourceNodeIds"],
         });
       }

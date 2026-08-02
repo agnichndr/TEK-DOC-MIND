@@ -32,6 +32,7 @@ function validPipeline(): ProjectPipelineInput {
           parentPath: "/",
           fileName: "result",
           fileType: "md" as const,
+          sourceNodeIds: [agentNodeId],
         },
       },
     ],
@@ -88,7 +89,7 @@ test("requires exactly one source and rejects disconnected agent nodes", () => {
   );
 });
 
-test("requires at least one agent and one output file", () => {
+test("requires an agent and an output file without requiring a source-to-output link", () => {
   const withoutAgent = validPipeline();
   withoutAgent.nodes = [
     {
@@ -106,6 +107,13 @@ test("requires at least one agent and one output file", () => {
   const withoutOutput = validPipeline();
   delete withoutOutput.nodes[1].output;
   assert.equal(projectPipelineInputSchema.safeParse(withoutOutput).success, false);
+
+  const withoutOutputSources = validPipeline();
+  withoutOutputSources.nodes[1].output!.sourceNodeIds = [];
+  assert.equal(
+    projectPipelineInputSchema.safeParse(withoutOutputSources).success,
+    true,
+  );
 });
 
 test("rejects links to the source and unknown node references", () => {
@@ -196,6 +204,7 @@ test("preserves ordered output-file mappings and validates every source", () => 
     parentPath: "/generated",
     fileName: "combined",
     fileType: "md",
+    position: { x: 720, y: 420 },
     sourceNodeIds: [secondAgentNodeId, agentNodeId],
     sourceHeaders: {
       [secondAgentNodeId]: "Research",
@@ -210,16 +219,20 @@ test("preserves ordered output-file mappings and validates every source", () => 
   assert.equal(projectPipelineInputSchema.safeParse(input).success, false);
 
   input.nodes[1].output.sourceHeaders = {
-    [sourceId]: "Repository",
+    ["99999999-9999-4999-8999-999999999999"]: "Unknown",
   };
   assert.equal(projectPipelineInputSchema.safeParse(input).success, false);
 
   input.nodes[1].output.sourceHeaders = undefined;
 
+  input.nodes[1].output.sourceNodeIds = [sourceId, secondAgentNodeId];
+  assert.equal(projectPipelineInputSchema.safeParse(input).success, true);
+
   input.nodes[1].output.sourceNodeIds = [secondAgentNodeId];
-  assert.equal(projectPipelineInputSchema.safeParse(input).success, false);
+  assert.equal(projectPipelineInputSchema.safeParse(input).success, true);
 
   input.nodes[1].output.sourceNodeIds = [
+    sourceId,
     agentNodeId,
     "99999999-9999-4999-8999-999999999999",
   ];

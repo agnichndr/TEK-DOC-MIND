@@ -38,6 +38,7 @@ function pipeline(): ProjectPipelineInput {
           parentPath: "/generated/docs",
           fileName: "architecture",
           fileType: "md",
+          position: { x: 720, y: 420 },
           sourceNodeIds: [secondAgentNodeId, agentNodeId],
           sourceHeaders: {
             [secondAgentNodeId]: "Research notes",
@@ -85,6 +86,7 @@ test("pipeline YAML round-trips defaults, graph data, and edge anchors", () => {
       `sourceNodeIds:\\n\\s*- ${secondAgentNodeId}\\n\\s*- ${agentNodeId}`,
     ),
   );
+  assert.match(yaml, /position:\n\s+x: 720/);
   assert.match(yaml, /sourceHeaders:/);
   assert.match(yaml, /Research notes/);
   assert.match(yaml, /Final architecture/);

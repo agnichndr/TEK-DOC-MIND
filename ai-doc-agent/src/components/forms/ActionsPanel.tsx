@@ -1,10 +1,135 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { DocumentIcon, LayersIcon, XIcon } from "@/components/ui/Icons";
-import { UiDropdown } from "@/components/ui/UiDropdown";
+import {
+  ArrowIcon,
+  CheckIcon,
+  DocumentIcon,
+  LayersIcon,
+  XIcon,
+} from "@/components/ui/Icons";
 import type { ProjectDocumentAction } from "@/types/projectAction";
+
+type FilterOption = {
+  value: string;
+  label: string;
+};
+
+function MultiSelectFilter({
+  allLabel,
+  ariaLabel,
+  onChange,
+  options,
+  selectedValues,
+}: {
+  allLabel: string;
+  ariaLabel: string;
+  onChange: (values: string[]) => void;
+  options: FilterOption[];
+  selectedValues: string[];
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const selectedLabels = options
+    .filter((option) => selectedValues.includes(option.value))
+    .map((option) => option.label);
+  const summary = !selectedLabels.length
+    ? allLabel
+    : selectedLabels.length === 1
+      ? selectedLabels[0]
+      : `${selectedLabels.length} selected`;
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  const toggle = (value: string) => {
+    onChange(
+      selectedValues.includes(value)
+        ? selectedValues.filter((item) => item !== value)
+        : [...selectedValues, value],
+    );
+  };
+
+  return (
+    <div className="ui-dropdown action-multi-select" ref={rootRef}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        className="ui-dropdown-trigger"
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <span>
+          <strong>{summary}</strong>
+          <small>
+            {selectedValues.length
+              ? `${selectedValues.length} of ${options.length}`
+              : `${options.length} available`}
+          </small>
+        </span>
+        <ArrowIcon height={13} width={13} />
+      </button>
+      {open ? (
+        <div className="ui-dropdown-menu action-multi-select-menu">
+          <div
+            aria-multiselectable="true"
+            className="ui-dropdown-options action-multi-select-options"
+            role="listbox"
+          >
+            <button
+              aria-selected={!selectedValues.length}
+              className={!selectedValues.length ? "selected" : ""}
+              onClick={() => onChange([])}
+              role="option"
+              type="button"
+            >
+              <span>
+                <strong>{allLabel}</strong>
+                <small>Do not limit this filter</small>
+              </span>
+              {!selectedValues.length ? (
+                <CheckIcon height={14} width={14} />
+              ) : null}
+            </button>
+            {options.map((option) => {
+              const selected = selectedValues.includes(option.value);
+              return (
+                <button
+                  aria-selected={selected}
+                  className={selected ? "selected" : ""}
+                  key={option.value}
+                  onClick={() => toggle(option.value)}
+                  role="option"
+                  type="button"
+                >
+                  <span>
+                    <strong>{option.label}</strong>
+                  </span>
+                  {selected ? <CheckIcon height={14} width={14} /> : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function actionReference(id: string) {
   return `ACT-${id.slice(0, 8).toUpperCase()}`;
@@ -24,8 +149,8 @@ export function ActionsPanel({
   actions: ProjectDocumentAction[];
   onNavigateGroups: () => void;
 }) {
-  const [repositoryGroupId, setRepositoryGroupId] = useState("all");
-  const [pipelineId, setPipelineId] = useState("all");
+  const [repositoryGroupIds, setRepositoryGroupIds] = useState<string[]>([]);
+  const [pipelineIds, setPipelineIds] = useState<string[]>([]);
 
   const repositoryGroupOptions = useMemo(
     () =>
@@ -38,7 +163,7 @@ export function ActionsPanel({
         ),
       )
         .sort((left, right) => left[1].localeCompare(right[1]))
-        .map(([value, label]) => ({ value, label, meta: "Repository group" })),
+        .map(([value, label]) => ({ value, label })),
     [actions],
   );
   const pipelineOptions = useMemo(
@@ -49,16 +174,16 @@ export function ActionsPanel({
         ),
       )
         .sort((left, right) => left[1].localeCompare(right[1]))
-        .map(([value, label]) => ({ value, label, meta: "Pipeline" })),
+        .map(([value, label]) => ({ value, label })),
     [actions],
   );
   const visibleActions = actions.filter(
     (action) =>
-      (repositoryGroupId === "all" ||
-        action.repositoryGroupId === repositoryGroupId) &&
-      (pipelineId === "all" || action.pipelineId === pipelineId),
+      (!repositoryGroupIds.length ||
+        repositoryGroupIds.includes(action.repositoryGroupId)) &&
+      (!pipelineIds.length || pipelineIds.includes(action.pipelineId)),
   );
-  const filtered = repositoryGroupId !== "all" || pipelineId !== "all";
+  const filtered = repositoryGroupIds.length > 0 || pipelineIds.length > 0;
 
   return (
     <section className="repository-list-section actions-section">
@@ -89,8 +214,8 @@ export function ActionsPanel({
                 <button
                   aria-label="Clear action filters"
                   onClick={() => {
-                    setRepositoryGroupId("all");
-                    setPipelineId("all");
+                    setRepositoryGroupIds([]);
+                    setPipelineIds([]);
                   }}
                   type="button"
                 >
@@ -100,26 +225,22 @@ export function ActionsPanel({
             </header>
             <div className="field-group">
               <span className="field-label">Repository group</span>
-              <UiDropdown
+              <MultiSelectFilter
+                allLabel="All repository groups"
                 ariaLabel="Filter actions by repository group"
-                onChange={setRepositoryGroupId}
-                options={[
-                  { value: "all", label: "All repository groups" },
-                  ...repositoryGroupOptions,
-                ]}
-                value={repositoryGroupId}
+                onChange={setRepositoryGroupIds}
+                options={repositoryGroupOptions}
+                selectedValues={repositoryGroupIds}
               />
             </div>
             <div className="field-group">
               <span className="field-label">Pipeline</span>
-              <UiDropdown
+              <MultiSelectFilter
+                allLabel="All pipelines"
                 ariaLabel="Filter actions by pipeline"
-                onChange={setPipelineId}
-                options={[
-                  { value: "all", label: "All pipelines" },
-                  ...pipelineOptions,
-                ]}
-                value={pipelineId}
+                onChange={setPipelineIds}
+                options={pipelineOptions}
+                selectedValues={pipelineIds}
               />
             </div>
           </aside>
@@ -176,8 +297,8 @@ export function ActionsPanel({
                 <button
                   className="empty-add-button"
                   onClick={() => {
-                    setRepositoryGroupId("all");
-                    setPipelineId("all");
+                    setRepositoryGroupIds([]);
+                    setPipelineIds([]);
                   }}
                   type="button"
                 >
