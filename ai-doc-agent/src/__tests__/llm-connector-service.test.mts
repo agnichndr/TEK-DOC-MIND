@@ -183,9 +183,24 @@ test("discovers and verifies Gemini model metadata", async () => {
     calls.push(String(request));
     assert.equal(new Headers(init?.headers).get("x-goog-api-key"), secret);
     return String(request).endsWith("/models/gemini-test")
-      ? response(200, { name: input.defaultModel, displayName: "Gemini Test" })
+      ? response(200, {
+          name: input.defaultModel,
+          displayName: "Gemini Test",
+          supportedGenerationMethods: ["generateContent"],
+        })
       : response(200, {
-          models: [{ name: input.defaultModel, displayName: "Gemini Test" }],
+          models: [
+            {
+              name: input.defaultModel,
+              displayName: "Gemini Test",
+              supportedGenerationMethods: ["generateContent"],
+            },
+            {
+              name: "models/gemini-embedding-test",
+              displayName: "Gemini Embedding Test",
+              supportedGenerationMethods: ["embedContent"],
+            },
+          ],
         });
   };
 
@@ -200,8 +215,23 @@ test("discovers and verifies Gemini model metadata", async () => {
   const model = await verifyLlmModelAccess(input, { fetchImplementation });
 
   assert.equal(models[0]?.id, input.defaultModel);
+  assert.equal(models.length, 1);
   assert.equal(model.id, input.defaultModel);
   assert.equal(calls.every((url) => new URL(url).hostname === "generativelanguage.googleapis.com"), true);
+
+  await assert.rejects(
+    verifyLlmModelAccess(input, {
+      fetchImplementation: async () =>
+        response(200, {
+          name: input.defaultModel,
+          displayName: "Gemini Test",
+          supportedGenerationMethods: ["embedContent"],
+        }),
+    }),
+    (error) =>
+      error instanceof LlmConnectorVerificationError &&
+      error.code === "model_unavailable",
+  );
 });
 
 test("discovers and verifies Azure OpenAI model metadata", async () => {

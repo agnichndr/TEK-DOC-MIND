@@ -13,7 +13,10 @@ test("document action creation validates input and requires a live server sessio
   const validation = source.indexOf(
     "createProjectDocumentActionInputSchema.safeParse(input)",
   );
-  const session = source.indexOf("(await cookies()).get(PROJECT_SESSION_COOKIE)");
+  const session = source.indexOf(
+    "(await cookies()).get(PROJECT_SESSION_COOKIE)",
+    validation,
+  );
   const service = source.indexOf("await createProjectDocumentAction({");
 
   assert.ok(validation >= 0 && validation < session);

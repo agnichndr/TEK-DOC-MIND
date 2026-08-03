@@ -224,6 +224,17 @@ function parseNamedModel(
   };
 }
 
+function supportsGeminiGenerateContent(value: unknown) {
+  assertObject(value);
+  if (
+    !Array.isArray(value.supportedGenerationMethods) ||
+    value.supportedGenerationMethods.some((method) => typeof method !== "string")
+  ) {
+    throw new LlmConnectorVerificationError("invalid_response");
+  }
+  return value.supportedGenerationMethods.includes("generateContent");
+}
+
 function uniqueModels(models: LlmProviderModel[]) {
   return [...new Map(models.map((model) => [model.id, model])).values()];
 }
@@ -305,11 +316,11 @@ export async function discoverLlmModels(
           init,
         );
         assertArrayField(body, "models");
-        models.push(
-          ...(body.models as unknown[]).map((model) =>
-            parseNamedModel(model, "models/"),
-          ),
-        );
+        for (const candidate of body.models as unknown[]) {
+          if (supportsGeminiGenerateContent(candidate)) {
+            models.push(parseNamedModel(candidate, "models/"));
+          }
+        }
         if (typeof body.nextPageToken !== "string" || !body.nextPageToken) break;
         pageToken = body.nextPageToken;
         if (page === MAX_MODEL_PAGES - 1) {
@@ -440,6 +451,9 @@ export async function verifyLlmModelAccess(
       const model = parseNamedModel(body, "models/");
       if (model.id !== input.defaultModel) {
         throw new LlmConnectorVerificationError("invalid_response");
+      }
+      if (!supportsGeminiGenerateContent(body)) {
+        throw new LlmConnectorVerificationError("model_unavailable");
       }
       return model;
     }

@@ -111,6 +111,64 @@ export async function uploadPipelineBlob(input: {
   };
 }
 
+export async function uploadTextBlob(input: {
+  blobName: string;
+  content: string;
+  contentType?: string;
+}) {
+  const env = getAzureBlobEnv();
+  const date = new Date().toUTCString();
+  const bytes = Buffer.from(input.content, "utf8");
+  const contentType = input.contentType ?? "text/plain; charset=utf-8";
+  const azureHeaders = {
+    "x-ms-blob-content-type": contentType,
+    "x-ms-blob-type": "BlockBlob",
+    "x-ms-date": date,
+    "x-ms-version": AZURE_STORAGE_API_VERSION,
+  };
+  const response = await fetch(
+    blobUrl(
+      env.AZURE_STORAGE_ACCOUNT_NAME,
+      env.AZURE_STORAGE_CONTAINER_NAME,
+      input.blobName,
+    ),
+    {
+      body: bytes,
+      headers: {
+        Authorization: authorizationHeader({
+          method: "PUT",
+          accountName: env.AZURE_STORAGE_ACCOUNT_NAME,
+          accessKey: env.AZURE_STORAGE_ACCESS_KEY,
+          containerName: env.AZURE_STORAGE_CONTAINER_NAME,
+          blobName: input.blobName,
+          contentLength: bytes.byteLength,
+          contentType,
+          azureHeaders,
+        }),
+        "Content-Length": String(bytes.byteLength),
+        "Content-Type": contentType,
+        ...azureHeaders,
+      },
+      method: "PUT",
+    },
+  );
+  if (!response.ok) {
+    console.error("Azure action artifact upload failed", {
+      status: response.status,
+      requestId: response.headers.get("x-ms-request-id"),
+    });
+    throw new Error("Azure Blob upload failed.");
+  }
+  return {
+    mediaUrl: blobUrl(
+      env.AZURE_STORAGE_ACCOUNT_NAME,
+      env.AZURE_STORAGE_CONTAINER_NAME,
+      input.blobName,
+    ),
+    contentType,
+  };
+}
+
 export async function deletePipelineBlob(blobName: string) {
   const env = getAzureBlobEnv();
   const date = new Date().toUTCString();

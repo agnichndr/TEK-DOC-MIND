@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -41,7 +41,10 @@ import {
 import { UiDropdown } from "@/components/ui/UiDropdown";
 import type { LlmConnectorSummary, LlmConnectorType } from "@/types/llmConnector";
 import type { ProjectAgent } from "@/types/agent";
-import type { ProjectDocumentAction } from "@/types/projectAction";
+import type {
+  ProjectDocumentAction,
+  ProjectDocumentActionPage,
+} from "@/types/projectAction";
 import type {
   ProjectLlmConnector,
   ProjectRepositoryGroup,
@@ -415,7 +418,7 @@ function CreateDocumentActionDialog({
           <ArrowIcon height={16} width={16} />
           <div>
             <small>Action</small>
-            <strong>CREATE · NEW</strong>
+            <strong>CREATE · RUNNING</strong>
           </div>
         </div>
 
@@ -466,7 +469,7 @@ function CreateDocumentActionDialog({
               onClick={() => void createAction()}
               type="button"
             >
-              {saving ? "Creating action…" : "Create document"}
+              {saving ? "Starting action…" : "Create document"}
             </button>
           ) : (
             <button
@@ -1098,7 +1101,7 @@ export function ProjectResources({
   projectName,
   repositories,
 }: {
-  actions: ProjectDocumentAction[];
+  actions: ProjectDocumentActionPage;
   agents: ProjectAgent[];
   connectors: ProjectLlmConnector[];
   groups: ProjectRepositoryGroup[];
@@ -1109,7 +1112,12 @@ export function ProjectResources({
   repositories: ProjectRepository[];
 }) {
   const [tab, setTab] = useState<ProjectTab>("repositories");
-  const [projectActions, setProjectActions] = useState(actions);
+  const [actionCount, setActionCount] = useState(actions.totalCount);
+  const [actionsRefreshKey, setActionsRefreshKey] = useState(0);
+  const updateActionCount = useCallback(
+    (count: number) => setActionCount(count),
+    [],
+  );
   const connectorSummaries = connectors.map((connector) => {
     const { createdAt, updatedAt, credentialStored, ...summary } = connector;
     void createdAt;
@@ -1137,7 +1145,7 @@ export function ProjectResources({
           Pipelines <span>{pipelines.length}</span>
         </button>
         <button className={tab === "actions" ? "active" : ""} onClick={() => setTab("actions")} role="tab" type="button">
-          Actions <span>{projectActions.length}</span>
+          Actions <span>{actionCount}</span>
         </button>
       </div>
       {tab === "repositories" ? (
@@ -1146,11 +1154,9 @@ export function ProjectResources({
       {tab === "groups" ? (
         <RepositoryGroupsPanel
           initialGroups={groups}
-          onActionCreated={(action) => {
-            setProjectActions((current) => [
-              action,
-              ...current.filter((item) => item.id !== action.id),
-            ]);
+          onActionCreated={() => {
+            setActionCount((current) => current + 1);
+            setActionsRefreshKey((current) => current + 1);
             setTab("actions");
           }}
           onNavigatePipelines={() => setTab("pipelines")}
@@ -1182,8 +1188,19 @@ export function ProjectResources({
       ) : null}
       {tab === "actions" ? (
         <ActionsPanel
-          actions={projectActions}
+          initialPage={actions}
           onNavigateGroups={() => setTab("groups")}
+          onTotalCountChange={updateActionCount}
+          pipelineOptions={pipelines.map((pipeline) => ({
+            label: pipeline.name,
+            value: pipeline.id,
+          }))}
+          refreshKey={actionsRefreshKey}
+          repositoryGroupOptions={groups.map((group) => ({
+            label: group.name,
+            value: group.id,
+          }))}
+          totalActionCount={actionCount}
         />
       ) : null}
     </div>

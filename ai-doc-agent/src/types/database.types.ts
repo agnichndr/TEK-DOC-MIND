@@ -17,6 +17,19 @@ export type Database = {
           pipeline_id: string;
           action_type: string;
           state: string;
+          stage: string;
+          repository_analysis_state: string;
+          repository_group_snapshot: Json;
+          pipeline_snapshot: Json;
+          overview: string | null;
+          code_languages: Json;
+          global_context: Json | null;
+          global_context_blob_name: string | null;
+          global_context_url: string | null;
+          action_version: number;
+          error_message: string | null;
+          started_at: string | null;
+          repository_analysis_completed_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -27,6 +40,19 @@ export type Database = {
           pipeline_id: string;
           action_type?: string;
           state?: string;
+          stage?: string;
+          repository_analysis_state?: string;
+          repository_group_snapshot: Json;
+          pipeline_snapshot: Json;
+          overview?: string | null;
+          code_languages?: Json;
+          global_context?: Json | null;
+          global_context_blob_name?: string | null;
+          global_context_url?: string | null;
+          action_version?: number;
+          error_message?: string | null;
+          started_at?: string | null;
+          repository_analysis_completed_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -35,6 +61,19 @@ export type Database = {
           pipeline_id?: string;
           action_type?: string;
           state?: string;
+          stage?: string;
+          repository_analysis_state?: string;
+          repository_group_snapshot?: Json;
+          pipeline_snapshot?: Json;
+          overview?: string | null;
+          code_languages?: Json;
+          global_context?: Json | null;
+          global_context_blob_name?: string | null;
+          global_context_url?: string | null;
+          action_version?: number;
+          error_message?: string | null;
+          started_at?: string | null;
+          repository_analysis_completed_at?: string | null;
           updated_at?: string;
         };
         Relationships: [
@@ -688,6 +727,18 @@ export type Database = {
           created_at: string;
           updated_at: string;
         }[];
+      };
+      list_project_actions_page: {
+        Args: {
+          p_session_token_hash: string;
+          p_page: number;
+          p_page_size: number;
+          p_repository_group_ids: string[];
+          p_pipeline_ids: string[];
+          p_sort_by: string;
+          p_sort_direction: string;
+        };
+        Returns: Json;
       };
       create_project_document_action: {
         Args: {

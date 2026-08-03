@@ -6,7 +6,7 @@ import { ProjectResources } from "@/components/forms/ProjectResources";
 import { LockIcon } from "@/components/ui/Icons";
 import { PROJECT_SESSION_COOKIE } from "@/lib/projectSession";
 import { listProjectAgents } from "@/services/agentService";
-import { listProjectDocumentActions } from "@/services/projectActionService";
+import { listProjectDocumentActionsPage } from "@/services/projectActionService";
 import {
   listProjectPipelines,
   listProjectUploads,
@@ -17,6 +17,8 @@ import {
   listProjectLlmConnectors,
   listProjectRepositoryGroups,
 } from "@/services/projectResourceService";
+
+export const maxDuration = 300;
 
 export default async function ProjectPage() {
   const cookieStore = await cookies();
@@ -47,7 +49,14 @@ export default async function ProjectPage() {
       listProjectAgents(sessionToken),
       listProjectPipelines(sessionToken),
       listProjectUploads(sessionToken),
-      listProjectDocumentActions(sessionToken),
+      listProjectDocumentActionsPage(sessionToken, {
+        page: 1,
+        pageSize: 10,
+        repositoryGroupIds: [],
+        pipelineIds: [],
+        sortBy: "createdAt",
+        sortDirection: "desc",
+      }),
     ]);
 
   return (

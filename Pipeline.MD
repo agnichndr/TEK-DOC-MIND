@@ -4,13 +4,14 @@
 
 The Pipeline Builder is the visual workflow-definition layer of TEK-DOC-MIND. It lets a project describe how repository context should move through one or more reusable AI agents and how selected node results should be arranged into document files.
 
-The builder currently creates, validates, imports, exports, and persists pipeline definitions. It does **not** yet execute the graph, call the agents in dependency order, assemble generated files, or convert content into the selected output formats. A document action currently records a project-scoped request with type `CREATE` and state `NEW`; there is no worker or orchestration runtime that consumes that action yet.
+The builder creates, validates, imports, exports, and persists pipeline definitions. The execution layer now implements the first runtime stage: a document action starts as `RUNNING`, resolves immutable repository-group and pipeline snapshots, analyzes only the action's selected GitHub scopes with a dedicated Repo Analyzer, persists structured global context, and uploads `Global_Context.md`. It does **not** yet execute the authored agent-node DAG, assemble generated output files, or convert content into the selected output formats.
 
 This distinction matters:
 
 - The current builder is a strong **workflow contract and graph authoring system**.
-- The graph, agent references, file inputs, output mappings, and repository-group/action mapping are ready to drive a future executor.
-- Runtime behavior such as retries, parallel execution, prompt composition, output conversion, and failure recovery still needs to be implemented.
+- The action source/bootstrap stage is executable and observable; its result is the shared context intended for later nodes.
+- The graph, agent references, file inputs, and output mappings remain a validated contract for the next executor stage.
+- Durable job recovery, topological node execution, retries, output conversion, and node-level failure recovery still need to be implemented.
 
 ## 2. Pipeline Mental Model
 
@@ -18,7 +19,7 @@ A pipeline has three related, but different, kinds of connections.
 
 1. **Workflow edges** connect the GitHub source and agent nodes. They describe data dependencies and form a directed acyclic graph (DAG).
 2. **Output mappings** connect node results to output-file targets. They describe file assembly order but are not workflow dependencies.
-3. **Document actions** connect one saved Repository Group to one saved pipeline. This provides the concrete repository selection that the pipeline's source placeholder will eventually use at runtime.
+3. **Document actions** connect one saved Repository Group to one saved pipeline. Creation snapshots both resources and immediately uses the concrete repository selection in the Repo Analyzer source stage.
 
 ```mermaid
 flowchart LR
@@ -81,7 +82,7 @@ Agent nodes support:
 - reusable project-upload inputs and newly uploaded inputs;
 - independent positioning on a bounded canvas.
 
-The pipeline also stores a default connector and model as part of its canonical contract. The connector must exist in the project; the model is required, syntax-checked, and populated from live model discovery in the UI, but the database does not independently prove that the model remains available. In the current code, existing agent nodes continue to use their own saved connector/model, and the inline agent-creation dialog does not inherit the selected pipeline defaults. A future executor or UI enhancement can make the intended fallback/inheritance behavior explicit.
+The pipeline also stores a default connector and model as part of its canonical contract. The connector must exist in the project; the model is required, syntax-checked, and populated from live model discovery in the UI, but the database does not independently prove that the model remains available. The Repo Analyzer uses these pipeline defaults. Existing authored agent nodes continue to own their saved connector/model, and the inline agent-creation dialog does not inherit the selected pipeline defaults. Later DAG execution must preserve that distinction unless the contract is explicitly changed.
 
 ### 3.3 Workflow Edges
 
@@ -207,14 +208,60 @@ Saved pipelines appear in searchable card or table views. They can be reopened, 
 From a Repository Group, the user can select a saved pipeline and create a distinct action. The database stores the mapping as:
 
 - action type: `CREATE`;
-- initial state: `NEW`;
+- action state: `RUNNING`;
+- stage: `REPOSITORY_ANALYSIS`;
+- repository-analysis state: `QUEUED`, atomically claimed as `RUNNING`;
 - selected Repository Group;
 - selected pipeline;
+- immutable snapshots of both selected resources;
 - project-derived ownership and timestamps.
 
-Today this is a durable queued request record. It is not yet consumed by an execution worker.
+The action is returned immediately and auto-opens in the Actions workspace. Next.js post-response work claims and runs the repository stage. Success changes the stage to `PIPELINE_PENDING` while keeping the overall action `RUNNING`, because the authored graph is not executed yet. Failure explicitly marks the action and repository stage `FAILED` with sanitized text.
 
-## 5. Save and Persistence Flow
+## 5. Current Repository-Analysis Runtime
+
+The implemented executor boundary is the source-context bootstrap, not the authored pipeline DAG.
+
+```mermaid
+sequenceDiagram
+    participant UI as Actions UI
+    participant Action as Protected Server Action
+    participant DB as Session-scoped RPCs
+    participant GitHub as GitHub Contents API
+    participant LLM as Pipeline default model
+    participant Azure as Azure Blob Storage
+
+    UI->>Action: Repository Group ID + Pipeline ID
+    Action->>DB: Validate same-project resources, snapshot, insert RUNNING
+    DB-->>Action: Action with analysis QUEUED
+    Action-->>UI: Running action (auto-expanded)
+    Action->>DB: Atomically claim QUEUED -> RUNNING
+    DB-->>Action: Immutable execution context
+    Action->>LLM: Verify snapshot default model is available for generation
+    Action->>GitHub: Read only snapshot repository/branch/path scopes
+    Action->>Action: Compute language percentages from file bytes
+    Action->>LLM: Repo_Analyzer.md + bounded scoped source context
+    LLM-->>Action: Structured repository findings
+    Action->>Azure: Upload versioned Global_Context.md
+    Action->>DB: Persist global_context + overview + languages
+    DB-->>UI: Repository analysis SUCCEEDED; PIPELINE_PENDING
+```
+
+Runtime behavior:
+
+- `claim_project_action_repository_analysis` is an atomic, session-scoped eligibility gate, so the same queued stage cannot be claimed twice.
+- Before repository traversal, the executor revalidates the snapshot's default model. Gemini discovery and verification expose only models whose provider metadata includes `generateContent`; an unavailable, retired, or non-generative saved model fails with a sanitized corrective message instead of consuming repository-read capacity.
+- GitHub traversal uses only repository IDs from the snapshot, the snapshot branch, and validated selected files/directories. Overlapping path selections are normalized; bounded file/directory, size, and prompt budgets prevent an unbounded run.
+- Source-language composition is deterministic and byte-based for recognized code extensions. It is not an LLM estimate. The JSON array stores `language`, `bytes`, and `percentage`.
+- `Repo_Analyzer.md` defines the dedicated agent's trust boundary and structured JSON contract for overview, intent, architecture, design patterns, important modules, repository roles/relationships, and limitations.
+- The connector credential is decrypted only server-side. The snapshot's pipeline default connector/model is used across OpenAI, Anthropic, Gemini, Azure OpenAI, Bedrock Converse, or Vertex AI.
+- The validated result is stored in the action's `global_context` JSONB and rendered to the Azure path `projectname_projectid/pipelinename_pipelineid/Actions/actionid/v#/Global_Context.md`.
+- The active action auto-expands as Repository Group -> Repo Analyzer. It polls only while analysis is queued/running, then shows the overview and code-source percentages.
+- A failed Azure write is not recorded as successful; a failed database completion after upload triggers best-effort blob cleanup.
+
+Current reliability limit: execution uses framework post-response work plus a database claim, not a durable external queue. Process termination after a claim can leave a `RUNNING` analysis without automatic recovery. The next executor increment needs lease/retry/recovery semantics before long-running DAG execution.
+
+## 6. Save and Persistence Flow
 
 ```mermaid
 sequenceDiagram
@@ -249,7 +296,7 @@ Pipeline data is intentionally stored in two representations:
 
 Node output configuration is stored as JSONB on the normalized node row. Node media relationships are normalized separately and reconstructed as `inputMediaUrls` when pipelines are listed.
 
-## 6. YAML Contract
+## 7. YAML Contract
 
 The YAML format is versioned and currently requires `version: 1`.
 
@@ -317,7 +364,7 @@ YAML behavior and boundaries:
 
 The current YAML is therefore best described as **same-project portability and duplication**, not cross-project portability. Cross-project import would require a safe remapping flow for project ID, agent references, connectors/models, and media resources.
 
-## 7. Power and Extent of Dynamicity
+## 8. Power and Extent of Dynamicity
 
 The builder is dynamic inside a deliberately constrained graph model.
 
@@ -332,24 +379,24 @@ The builder is dynamic inside a deliberately constrained graph model.
 | Reusable agents | Yes | Any project agent can be referenced by multiple pipelines or nodes |
 | Agent creation while editing | Yes | A new project agent can be created and immediately added |
 | Per-agent model/provider | Yes | Each referenced agent owns its connector and model |
-| Pipeline default model/provider | Stored | Validated and persisted, but not currently applied as an agent runtime fallback |
+| Pipeline default model/provider | Partially applied | Used by the Repo Analyzer; authored agent nodes retain their own connector/model contract |
 | Node file inputs | Yes | Existing project uploads and new uploads can be assigned per node |
 | Multi-file output assembly | Yes, declarative | Up to 50 unique node contributors per file, ordered with optional headers |
 | Multiple output files | Yes | Any number within the 50-node/output-owner limit |
 | Output formats | Declarative | 16 types can be selected; generation/conversion is not implemented |
 | YAML import/export | Yes, project-bound | Version 1, maximum 500 KB, existing project agents/connectors required |
 | Repository selection | Dynamic at action creation | One Repository Group is mapped to one pipeline per action |
-| Runtime execution | No | No graph scheduler, agent runner, or action consumer exists yet |
+| Runtime execution | Partial | Auto-start and repository analysis are implemented; authored DAG scheduling and output assembly are not |
 | Conditional routing | No | No `if`, switch, filter, or predicate node exists |
 | Loops and iteration | No | DAG validation intentionally rejects cycles |
 | Runtime variables/templates | No | No per-run variable or expression language exists |
 | Retry/timeout/fallback policy | No | Not represented in the current schema |
 | Human approval steps | No | No approval node or paused execution state exists |
-| Scheduling/webhooks | No | Actions are created manually and remain `NEW` |
+| Scheduling/webhooks | Partial | Actions start automatically after manual creation; no durable queue, timer, or webhook trigger exists |
 
 The current power comes from composition: a small set of strongly typed primitives can express many document workflows through fan-out, fan-in, reusable agents, per-node files, and many-to-many output mappings. The current boundary is that topology and desired artifacts are dynamic, while node kinds and runtime policies are fixed.
 
-## 8. Validation and Hard Limits
+## 9. Validation and Hard Limits
 
 | Area | Limit or invariant |
 | --- | --- |
@@ -380,7 +427,7 @@ Validation is layered:
 4. Security-definer PostgreSQL functions repeat project, connector, agent, media, topology, and limit checks.
 5. Deferred constraint triggers validate the final normalized graph after replacement is complete.
 
-## 9. Graph Editing and Cleanup Behavior
+## 10. Graph Editing and Cleanup Behavior
 
 The builder aggressively prevents broken saved graphs.
 
@@ -396,7 +443,7 @@ The builder aggressively prevents broken saved graphs.
 
 Because branch removal can delete several downstream nodes at once, users should treat edge deletion as a structural edit rather than a purely visual unlink operation.
 
-## 10. Security and Project Isolation
+## 11. Security and Project Isolation
 
 Pipeline ownership is based on the accountless Project Vault session model.
 
@@ -404,6 +451,8 @@ Pipeline ownership is based on the accountless Project Vault session model.
 - Server Actions read that cookie; pipeline input cannot choose its authoritative project ID.
 - The service sends only a hash of the opaque token to the database RPC.
 - The RPC derives the project from an unexpired session and constrains every pipeline, agent, connector, upload, and action reference to that project.
+- Action creation snapshots the validated Repository Group and pipeline; claim, completion, and failure transitions repeat project and stage eligibility checks.
+- Repository content is untrusted data and is bounded to snapshot path scopes. Connector and repository credentials are never added to prompts, context, artifacts, or action responses.
 - Pipeline, node, edge, upload, and action tables have forced Row Level Security.
 - Direct table access is revoked from `anon` and `authenticated`.
 - Narrow `SECURITY DEFINER` RPCs are the intended database interface.
@@ -411,21 +460,21 @@ Pipeline ownership is based on the accountless Project Vault session model.
 - Canonical YAML contains no secret credentials.
 - Imported YAML cannot cross a project boundary merely by presenting another `projectId`.
 
-## 11. Current Gaps Before Full Execution
+## 12. Current Gaps Before Full Execution
 
 The saved definition is expressive enough to become an execution plan, but a complete runtime still needs the following layers.
 
-### 11.1 Action lifecycle
+### 12.1 Action lifecycle
 
-Extend action state beyond `NEW`, for example: `QUEUED`, `RUNNING`, `SUCCEEDED`, `PARTIAL`, `FAILED`, and `CANCELLED`. State transitions should be database-controlled and accompanied by timestamps and sanitized failure details.
+The database now supports `NEW`, `QUEUED`, `RUNNING`, `SUCCEEDED`, `PARTIAL`, `FAILED`, and `CANCELLED`, with explicit repository-analysis and pipeline stages, timestamps, and sanitized errors. Remaining work is a transition policy for authored nodes, cancellation, partial completion, leases, recovery, and terminal success.
 
-### 11.2 Graph scheduler
+### 12.2 Graph scheduler
 
 Load a stable pipeline snapshot, topologically sort workflow edges, run independent nodes concurrently, block fan-in nodes until dependencies finish, and detect stale agent or connector references before starting.
 
-### 11.3 Runtime context contract
+### 12.3 Runtime context contract
 
-Define exactly what each agent receives:
+The source stage now produces versioned `global_context`. The remaining contract must define exactly what each authored agent receives:
 
 - resolved Repository Group files and logical context;
 - ordered upstream node outputs;
@@ -433,23 +482,23 @@ Define exactly what each agent receives:
 - agent skills Markdown;
 - execution metadata and token/size budgets.
 
-### 11.4 Agent invocation
+### 12.4 Agent invocation
 
-Resolve each agent's connector and model, decrypt credentials only on the server, normalize provider requests/responses, enforce timeouts, and record token/cost metadata without leaking secrets.
+Provider generation and server-only credential resolution exist for the Repo Analyzer. Authored nodes still need per-agent connector/model resolution, normalized typed outputs, token/cost metadata, and node-specific timeout/fallback behavior without leaking secrets.
 
-### 11.5 Output assembly and rendering
+### 12.5 Output assembly and rendering
 
 Read `sourceNodeIds` in order, apply optional headers, validate compatibility between agent output types and file types, then use format-specific renderers for Markdown, JSON, PDF, DOCX, images, and other declared targets.
 
-### 11.6 Reliability and observability
+### 12.6 Reliability and observability
 
 Add idempotency, retries, node-level status, logs, traces, cancellation, artifact checksums, and resumability. External Azure writes and database transitions need a defined compensation strategy because they cannot share one transaction.
 
-### 11.7 Versioning and reproducibility
+### 12.7 Versioning and reproducibility
 
-Actions should reference an immutable pipeline/agent snapshot or revision rather than silently observing later edits. Runtime model availability and prompt versions should also be recorded.
+Actions now snapshot the Repository Group and pipeline at creation and version the global-context artifact. Agent revision snapshots, model-availability evidence, prompt version identifiers, checksums, and complete replay metadata remain outstanding.
 
-## 12. Safe Directions for More Dynamicity
+## 13. Safe Directions for More Dynamicity
 
 The builder can grow without weakening its existing integrity model by adding explicit, typed capabilities:
 
@@ -468,7 +517,7 @@ The builder can grow without weakening its existing integrity model by adding ex
 
 Each new node or policy should be added to the TypeScript/Zod contract, canonical YAML version, normalized database representation, project-scoped RPC validation, migration tests, UI validation, and future executor together.
 
-## 13. Implementation Map
+## 14. Implementation Map
 
 The main implementation is under `ai-doc-agent/`:
 
@@ -483,11 +532,15 @@ The main implementation is under `ai-doc-agent/`:
 | Azure upload/delete implementation | `src/services/azureBlobService.ts` |
 | Document action schema | `src/types/projectAction.ts` |
 | Document action persistence | `src/services/projectActionService.ts` |
-| Pipeline, upload, action, and output constraints | `supabase/migrations/202608010005_create_project_pipelines.sql` through `202608020011_make_github_output_link_optional.sql` |
+| Dedicated repository-analysis instructions | `src/agents/Repo_Analyzer.md` |
+| Scoped GitHub scanning and source reads | `src/services/githubService.ts` |
+| Repo Analyzer orchestration and global-context rendering | `src/services/repositoryAnalyzerService.ts` |
+| Cross-provider repository-analysis generation | `src/services/llmGenerationService.ts` |
+| Pipeline, upload, action, output, and analyzer constraints | `supabase/migrations/202608010005_create_project_pipelines.sql` through `202608020012_auto_start_repository_analysis.sql` |
 | Pipeline and security regression coverage | `src/__tests__/pipeline-*.test.mts` and `src/__tests__/project-action-*.test.mts` |
 
-## 14. Summary
+## 15. Summary
 
 The Pipeline Builder already provides a powerful dynamic authoring model: one source-bound DAG, reusable provider-specific agents, arbitrary branching and merging, reusable node inputs, many-to-many ordered output assembly, visual layout persistence, project-bound YAML duplication, and defense-in-depth graph validation.
 
-Its dynamicity currently stops at **declarative workflow design**. The application can define and queue what should happen, but it does not yet perform the run. The next major capability is therefore not a more flexible canvas; it is a secure, observable executor that turns the existing validated graph contract into deterministic node execution and real artifacts.
+Its execution dynamicity currently stops after **repository source analysis**. The application auto-starts an action, builds secure versioned global context from exactly the selected repositories and paths, and exposes the result while the action remains `PIPELINE_PENDING`. The next major capability is deterministic topological execution of authored agent nodes followed by ordered output assembly and rendering.

@@ -195,32 +195,55 @@
 ### Document Actions
 
 - **Business Purpose:** Start document creation from a repository group by
-  mapping it to an available pipeline, recording a distinct queued action, and
-  exposing those mappings in a filterable Actions workspace.
+  mapping it to an available pipeline, immediately analyzing the scoped source
+  repositories, and exposing live progress plus reusable global context in the
+  Actions workspace.
 - **Data Contracts & Schemas:**
-  `createProjectDocumentActionInputSchema` and
-  `projectDocumentActionSchema` in `src/types/projectAction.ts` validate the
-  two resource references and returned action summary. Migration
+  `createProjectDocumentActionInputSchema`,
+  `projectDocumentActionPageQuerySchema`, and the action, analysis,
+  language-share, execution-context, and global-context schemas in
+  `src/types/projectAction.ts` validate resource references, bounded paging,
+  filters, sorting, provider results, and returned action detail. Migration
   `202608020009_create_project_actions.sql` adds the forced-RLS
-  `project_actions` table, database-assigned `CREATE` type and `NEW` state,
+  `project_actions` table and same-project foreign keys. Migration
+  `202608020012_auto_start_repository_analysis.sql` adds database-assigned
+  `RUNNING` lifecycle/stage values, immutable action snapshots, structured
+  `global_context`, code-language composition, versioned Azure metadata, and
+  restricted claim/complete/fail RPCs. The Repo Analyzer output contract lives
+  in `src/agents/Repo_Analyzer.md`.
+  Migration `202608030013_paginate_project_actions.sql` adds the bounded,
+  session-scoped page RPC with database-side filtering and sorting.
+  Together the migrations retain
   composite same-project foreign keys, and restricted session-scoped list and
   create RPCs.
 - **Backend Layer:**
   - Services: `src/services/projectActionService.ts` hashes the opaque session
-    token, calls typed RPCs, and validates mapped rows.
-  - API Routes / Actions: `src/actions/projectActionActions.ts` validates the
-    mapping, reads the HTTP-only project session, sanitizes failures, and
-    revalidates the project page.
+    token, calls the paginated list and typed lifecycle RPCs, and validates
+    mapped rows;
+    `repositoryAnalyzerService.ts` claims the action, resolves snapshot scopes,
+    computes language shares, invokes the pipeline default connector/model,
+    renders Markdown, uploads it, and persists global context.
+    `githubService.ts` performs bounded path-scoped traversal and file reads;
+    `llmGenerationService.ts` normalizes generation across the six supported
+    providers; `azureBlobService.ts` persists the Markdown artifact.
+  - API Routes / Actions: `src/actions/projectActionActions.ts` validates both
+    the create mapping and bounded list/pagination queries, reads the HTTP-only
+    project session, returns the running action, schedules the claimable
+    repository stage after the response, and supports session-scoped progress
+    polling.
 - **Frontend Layer:**
-  - Pages: `src/app/project/page.tsx` loads the session-scoped action list with
-    the other project resources.
+  - Pages: `src/app/project/page.tsx` loads the first session-scoped action page
+    with the other project resources.
   - Components: repository-group card/table actions and the pipeline-selection
     dialog live in `ProjectResources.tsx`; `ActionsPanel.tsx` provides the new
-    Actions tab, repository-group and pipeline filters, responsive table rows,
-    empty states, action type, state, and creation details.
+    Actions tab, server-backed repository-group and pipeline filters, sortable
+    headers, 10/20/50-row pagination, responsive table rows, retryable loading
+    failures, auto-expanded execution flow, repository/analyzer progress,
+    sanitized failure state, completed overview, and language-percentage bars.
 - **Cross-Module Dependencies:** Project Vault sessions, Repository Groups,
-  Pipelines, the typed Supabase RPC adapter, Zod, and shared project UI
-  primitives.
+  Pipelines, GitHub REST, encrypted LLM connectors, Azure Blob Storage, the
+  typed Supabase RPC adapter, Zod, and shared project UI primitives. Authored
+  pipeline agent-node scheduling and output assembly remain pending.
 
 ### Product Tour Onboarding
 

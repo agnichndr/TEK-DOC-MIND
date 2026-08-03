@@ -137,7 +137,7 @@ interface to list or revoke all other sessions without deleting the project.
 | Discover models for an agent | Live project session and a validated connector identifier | The same-origin route resolves the connector inside the session-derived project, decrypts its credential only on the server, and returns only sanitized provider model metadata |
 | List/save/delete project agents | Live project session and validated agent input | Agent rows are joined or mutated only through the session-derived project; connector/model references must use a connector saved in that project, and output behavior/type must match database-enforced values |
 | List/save/delete project pipelines and list/save project uploads | Live project session plus validated versioned YAML/graph and bounded multipart upload input | Pipeline, default connector/model, node, edge, anchor, agent, and media references are resolved inside the session-derived project; PostgreSQL enforces one source, full reachability, an acyclic graph, and project ownership of every media URL |
-| List/create document actions | Live project session and validated repository-group/pipeline UUIDs | The RPC derives the project from the session, verifies both mapped resources belong to it, and assigns immutable initial values `CREATE` and `NEW`; composite foreign keys prevent cross-project mappings |
+| List/create document actions and advance repository analysis | Live project session, validated repository-group/pipeline UUIDs, and an eligible action stage | Creation derives the project from the session, snapshots both same-project resources, and assigns `CREATE`/`RUNNING`; claim/complete/fail RPCs atomically constrain every transition to that action and project |
 | Logout | Current session token, when present | Deletes only the matching session |
 
 Exact-name confirmation reduces accidental destructive actions; it is not an
@@ -330,19 +330,44 @@ inference quota or future availability.
 - `createProjectDocumentActionAction` validates the repository-group and
   pipeline UUIDs before reading the HTTP-only project session or calling the
   server-only service. It accepts no project ID, action type, or state.
+- `listProjectDocumentActionsAction`, used for filtering, pagination, and live
+  progress polling, validates the requested page, fixed 10/20/50 page sizes,
+  up to 100 repository-group and pipeline UUID filters, and allowlisted sort
+  columns/directions before reading that same session cookie. Filters affect
+  only the session-scoped result and cannot select a project.
 - The list and create RPCs derive `project_id` from an unexpired project
   session. Both referenced resources must match that derived project before an
-  action is inserted.
+  action is inserted. Creation persists immutable repository-group and pipeline
+  snapshots so later analysis never trusts browser graph or scope data.
+- The paginated list RPC repeats page-size, filter-cardinality, and sort
+  allowlist checks in PostgreSQL, filters actions only through the live
+  session's derived project, and returns the requested row window plus its
+  scoped total.
 - `project_actions` has forced RLS and no direct `anon` or `authenticated`
   table privileges. Narrow security-definer RPCs are the only client-facing
   database surface.
 - Composite `(project_id, repository_group_id)` and
   `(project_id, pipeline_id)` foreign keys enforce project isolation even if a
   future caller bypasses the service layer. The database, not the browser,
-  assigns action type `CREATE` and initial state `NEW`.
+  assigns action type `CREATE`, state `RUNNING`, stage `REPOSITORY_ANALYSIS`,
+  and analysis state `QUEUED`.
+- The post-response analyzer must atomically claim `QUEUED -> RUNNING` through a
+  session-scoped RPC before accessing sources. It resolves repository IDs and
+  encrypted GitHub/LLM credentials through the same project session and reads
+  only the snapshot's repositories, branches, and validated relative paths.
+- `Repo_Analyzer.md` instructs the model to treat repository content as
+  untrusted data and ignore embedded instructions. Provider requests use the
+  snapshot's pipeline default connector/model; decrypted credentials never
+  enter prompts, `global_context`, artifacts, action responses, or logs.
+- Completion validates bounded JSON, rejects secret-like credential keys,
+  stores the structured result as `global_context`, and advances only an
+  eligible claimed action to `PIPELINE_PENDING`. Azure writes use server-only
+  Shared Key credentials and a versioned action path. Failure stores one
+  sanitized message and marks the action/stage explicitly failed.
 - Deleting a repository group or pipeline cascades only actions mapped to that
-  same project resource. An action contains identifiers and workflow state, not
-  repository credentials, connector credentials, or generated document bytes.
+  same project resource. Actions contain snapshots, non-secret analysis context,
+  and artifact metadata, not repository credentials, connector credentials, or
+  generated document bytes.
 
 ## Mandatory Rules for Future Changes
 
@@ -386,6 +411,14 @@ projects and verify:
   when given its real UUID and name;
 - a valid Project A session cannot create an action using a Project B
   repository group or pipeline UUID;
+- a valid Project A session cannot claim, complete, or fail a Project B action;
+- a duplicate claim cannot execute repository analysis twice, and completion
+  cannot advance an unclaimed, failed, or wrong-stage action;
+- an action snapshot cannot cause reads outside its repository IDs, branches,
+  and selected relative paths;
+- repository content containing prompt-injection text cannot override the Repo
+  Analyzer trust-boundary instructions or place credentials in persisted
+  context;
 - a caller-supplied project or user identifier cannot override session scope;
 - direct `anon` table reads and writes remain denied;
 - RPC overloads and grants expose only intended function signatures;
@@ -416,6 +449,10 @@ cross-project cases against PostgreSQL with the applied migrations.
   being removed.
 - Saved connector credentials are reusable server-side, but encryption-key
   rotation and provider-specific refresh-token flows are not yet implemented.
+- Repository analysis is launched with Next.js post-response work and an atomic
+  database claim, not a durable external job queue. A process termination after
+  claim can leave an action in `RUNNING` until a future retry/recovery mechanism
+  is added; authored pipeline agent nodes are not executed yet.
 
 These limitations must not be described as implemented protections in product
 copy or architecture documentation.

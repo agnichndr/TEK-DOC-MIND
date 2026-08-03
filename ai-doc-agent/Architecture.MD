@@ -52,8 +52,14 @@ file metadata in PostgreSQL, and persists only HTTPS media URLs in pipeline node
 and canonical YAML. File bytes never enter PostgreSQL.
 Document actions map one project repository group to one project pipeline. A
 Create document request persists a distinct action with database-assigned type
-`CREATE` and initial state `NEW`, then opens the Actions workspace where users
-can filter mappings by repository group or pipeline.
+`CREATE` and state `RUNNING`, plus immutable repository-group and pipeline
+snapshots. A claimable server-side Repo Analyzer then reads only the snapshot's
+GitHub repositories, branches, and selected paths, calculates source-language
+percentages from file bytes, and asks the pipeline's default connector/model to
+produce structured domain and architecture context. The result is retained as
+`global_context` JSONB and uploaded to Azure as versioned `Global_Context.md`.
+The action then remains `RUNNING` at `PIPELINE_PENDING`; authored graph-node
+execution and output assembly are not implemented yet.
 
 ## Security & Trust Boundaries
 
@@ -155,9 +161,17 @@ section summarizes those boundaries at the system level.
   belongs to the active project, and stores no binary column.
 - Document-action creation accepts only validated repository-group and pipeline
   UUIDs. The RPC derives the project from the live session, verifies both
-  resources inside that project, and assigns `CREATE` plus `NEW` itself.
+  resources inside that project, snapshots both contracts, and assigns
+  `CREATE`, `RUNNING`, and a claimable repository-analysis state itself.
   Composite foreign keys repeat the same-project constraint in PostgreSQL;
   deleting either mapped resource cascades only its dependent actions.
+- Repository analysis is scheduled only after the protected action record is
+  returned. A session-scoped atomic claim prevents duplicate execution. The
+  runtime resolves repository and connector credentials only on the server,
+  treats repository content as untrusted prompt data, and constrains GitHub
+  traversal to the snapshot's repository, branch, and repository-relative path
+  selections. Completion/failure RPCs repeat action/project eligibility checks,
+  validate bounded non-secret context, and expose only sanitized failure text.
 
 The project-password and short-lived project-session flow is the domain
 authentication mechanism for this accountless module, so it does not rely on a
@@ -239,13 +253,22 @@ the SQL target unambiguous from the RPC's returned `id` field.
 
 `Repository group card/table -> choose available pipeline -> Zod Server Action
 -> project-session cookie -> document-action service -> session-authorized RPC
--> same-project repository-group and pipeline checks -> forced-RLS
-project_actions -> Actions tab`
+-> same-project resource checks + immutable snapshots -> forced-RLS
+project_actions in RUNNING/QUEUED-analysis state -> Actions tab -> post-response
+Repo Analyzer claim -> scoped GitHub reads -> pipeline default connector/model
+-> structured global_context -> Azure Global_Context.md -> PIPELINE_PENDING`
 
 The client submits no project ID, action type, or state. Each accepted request
 creates a separate mapping, even when the same repository group and pipeline
-were used before. The Actions tab filters the returned non-secret mappings by
-repository group and pipeline and shows their type, state, and creation time.
+were used before. The action UI auto-expands active analysis, polls while the
+repository stage is queued/running, and replaces the analyzer progress node with
+the overview and deterministic code-language percentages on completion. The
+polling Server Action validates bounded page, page-size, filter, and sort input,
+then rereads the HTTP-only project session before requesting a database page.
+The session-authorized RPC derives project scope, applies stable sorting and
+filters in PostgreSQL, and returns only the requested 10/20/50-row window plus
+its scoped total; browser filters never become project authority. The
+remaining pipeline graph is deliberately not shown as executed yet.
 
 ### Configure a Project Agent
 
@@ -302,20 +325,26 @@ validated again, and passed through the same provider check.
 - **PostgreSQL pgcrypto:** bcrypt password hashing and verification.
 - **GitHub REST API:** Public/private repository detection, canonical metadata,
   token capability verification, paginated branch discovery, and on-demand
-  branch-specific directory browsing through the Contents API. Requests pin API
-  version `2026-03-10`.
+  branch-specific directory browsing through the Contents API. The Repo
+  Analyzer recursively traverses only action-snapshot scopes and reads bounded,
+  prioritized text files through the same Contents API. Requests pin API version
+  `2026-03-10`.
 - **OpenAI, Anthropic Claude, and Google Gemini:** Fixed-host model-list access
-  checks using submitted API keys or short-lived tokens.
+  checks and repository-analysis generation using encrypted project credentials.
 - **Azure OpenAI:** Model-list access against a validated Azure resource
   hostname using an API key or Entra access token.
 - **Azure Blob Storage:** Pipeline input files are uploaded with server-side
   Shared Key authentication to the environment-configured storage account and
   container. PostgreSQL retains project ownership, original name, MIME type,
-  size, blob name, and canonical media URL, never the file payload.
+  size, blob name, and canonical media URL, never the file payload. Repository
+  analysis writes Markdown to
+  `projectname_projectid/pipelinename_pipelineid/Actions/actionid/v#/Global_Context.md`.
 - **Amazon Bedrock:** Signed `ListFoundationModels` through the AWS SDK using a
-  validated region and encrypted project-scoped AWS credentials.
+  validated region and encrypted project-scoped AWS credentials; repository
+  analysis uses a server-signed Bedrock Converse request.
 - **Google Vertex AI:** Project/location model listing against a fixed,
-  location-derived Google API hostname using an OAuth access token.
+  location-derived Google API hostname and repository-analysis generation using
+  an OAuth access token.
 - **LobeHub Icons:** Provider SVGs are vendored from
   `@lobehub/icons-static-svg` 1.94.0. No runtime icon-library request is made.
 - **Monaco Editor:** The official VS Code editor engine is bundled into the
